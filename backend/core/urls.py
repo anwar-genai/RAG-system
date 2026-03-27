@@ -22,6 +22,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/chat/', views.chat_endpoint, name='chat_endpoint'),
     path('api/chat/stream/', views.chat_stream_endpoint, name='chat_stream_endpoint'),
+    path('api/documents/upload/', views.upload_documents, name='upload_documents'),
     path('api/session/', views.create_session, name='create_session'),
     path('api/session/<uuid:session_id>/', views.get_session, name='get_session'),
 ]

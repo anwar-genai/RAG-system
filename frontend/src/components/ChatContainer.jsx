@@ -7,9 +7,11 @@ import '../styles/ChatContainer.css';
 export default function ChatContainer() {
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [sessionId, setSessionId] = useState(null);
   const [error, setError] = useState(null);
   const messagesEndRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     // Initialize session on mount
@@ -124,6 +126,37 @@ export default function ChatContainer() {
     setError(null);
   };
 
+  const handleUploadClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFilesSelected = async (event) => {
+    const files = Array.from(event.target.files || []);
+    if (!files.length) return;
+
+    try {
+      setError(null);
+      setUploading(true);
+      const result = await chatService.uploadDocuments(files);
+      const uploadedCount = result.uploaded?.length || 0;
+      const skippedCount = result.skipped?.length || 0;
+      let message = `Uploaded ${uploadedCount} file${uploadedCount === 1 ? '' : 's'} and refreshed index.`;
+      if (skippedCount > 0) {
+        message += ` Skipped ${skippedCount} unsupported file${skippedCount === 1 ? '' : 's'}.`;
+      }
+      setMessages((prev) => [
+        ...prev,
+        { type: 'assistant', content: message, sources: [], id: null },
+      ]);
+    } catch (err) {
+      setError(err.message || 'Failed to upload documents');
+      console.error(err);
+    } finally {
+      setUploading(false);
+      event.target.value = '';
+    }
+  };
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
@@ -132,15 +165,36 @@ export default function ChatContainer() {
     <div className="chat-container">
       <div className="chat-header">
         <h1>RAG Chat Assistant</h1>
-        <button
-          type="button"
-          className="new-chat-btn"
-          onClick={handleNewChat}
-          title="Start a new chat (current conversation will be cleared)"
-          aria-label="Start new chat"
-        >
-          New Chat
-        </button>
+        <div className="chat-header-actions">
+          <button
+            type="button"
+            className="new-chat-btn"
+            onClick={handleNewChat}
+            title="Start a new chat (current conversation will be cleared)"
+            aria-label="Start new chat"
+            disabled={uploading}
+          >
+            New Chat
+          </button>
+          <button
+            type="button"
+            className="upload-doc-btn"
+            onClick={handleUploadClick}
+            title="Upload docs (.pdf, .txt, .md, .docx, .csv)"
+            aria-label="Upload documents"
+            disabled={uploading || loading}
+          >
+            {uploading ? 'Uploading...' : 'Upload Docs'}
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept=".pdf,.txt,.md,.docx,.csv"
+            className="upload-input"
+            onChange={handleFilesSelected}
+          />
+        </div>
       </div>
 
       <div className="messages-area">

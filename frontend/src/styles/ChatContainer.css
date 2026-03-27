@@ -25,6 +25,11 @@
   font-weight: 600;
 }
 
+.chat-header-actions {
+  display: flex;
+  align-items: center;
+}
+
 .new-chat-btn {
   padding: 0.6rem 1.2rem;
   background: rgba(255, 255, 255, 0.2);
@@ -35,6 +40,40 @@
   font-size: 0.9rem;
   font-weight: 500;
   transition: all 0.3s ease;
+}
+
+.upload-doc-btn {
+  margin-left: 0.75rem;
+  padding: 0.6rem 1.2rem;
+  background: rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: white;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+  transition: all 0.3s ease;
+}
+
+.upload-doc-btn:hover {
+  background: rgba(255, 255, 255, 0.3);
+  border-color: rgba(255, 255, 255, 0.5);
+  transform: translateY(-1px);
+}
+
+.upload-doc-btn:active {
+  transform: translateY(0);
+}
+
+.upload-doc-btn:disabled,
+.new-chat-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.upload-input {
+  display: none;
 }
 
 .new-chat-btn:hover {

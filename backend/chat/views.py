@@ -1,4 +1,6 @@
 import json
+import os
+from pathlib import Path
 from django.http import StreamingHttpResponse
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
@@ -7,7 +9,7 @@ import uuid
 
 from .models import ChatSession, Message
 from .serializers import ChatRequestSerializer, ChatResponseSerializer, ChatSessionSerializer
-from .rag import get_rag_system
+from .rag import get_rag_system, reload_rag_system
 
 
 @api_view(['POST'])
@@ -181,3 +183,69 @@ def create_session(request):
     """Create a new chat session"""
     session = ChatSession.objects.create()
     return Response({"session_id": str(session.session_id)}, status=status.HTTP_201_CREATED)
+
+
+@api_view(["POST"])
+def upload_documents(request):
+    """
+    Upload one or more knowledge files and refresh the RAG index.
+    Form field: files (supports multiple files).
+    """
+    uploaded_files = request.FILES.getlist("files")
+    if not uploaded_files:
+        single = request.FILES.get("file")
+        if single:
+            uploaded_files = [single]
+
+    if not uploaded_files:
+        return Response(
+            {"error": "No files uploaded. Use field 'files' (or 'file')."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    allowed_exts = {".pdf", ".txt", ".md", ".docx", ".csv"}
+    kb_path = Path(__file__).parent.parent / "knowledge_base"
+    kb_path.mkdir(exist_ok=True)
+
+    saved = []
+    skipped = []
+
+    for up_file in uploaded_files:
+        ext = os.path.splitext(up_file.name)[1].lower()
+        if ext not in allowed_exts:
+            skipped.append({"name": up_file.name, "reason": "unsupported file type"})
+            continue
+
+        safe_name = Path(up_file.name).name
+        target_path = kb_path / safe_name
+        with target_path.open("wb") as out:
+            for chunk in up_file.chunks():
+                out.write(chunk)
+        saved.append(safe_name)
+
+    if not saved:
+        return Response(
+            {"error": "No supported files uploaded.", "skipped": skipped},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        reload_rag_system()
+    except Exception as e:
+        return Response(
+            {
+                "error": f"Files uploaded but failed to refresh index: {e}",
+                "uploaded": saved,
+                "skipped": skipped,
+            },
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+    return Response(
+        {
+            "uploaded": saved,
+            "skipped": skipped,
+            "message": "Documents uploaded and index refreshed.",
+        },
+        status=status.HTTP_201_CREATED,
+    )

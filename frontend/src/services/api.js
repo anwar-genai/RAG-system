@@ -64,6 +64,26 @@ export const chatService = {
   },
 
   /**
+   * Upload knowledge-base documents and refresh backend index.
+   * @param {File[]} files
+   */
+  uploadDocuments: async (files) => {
+    const formData = new FormData();
+    files.forEach((file) => formData.append('files', file));
+
+    const response = await fetch(`${API_BASE_URL}/documents/upload/`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to upload documents');
+    }
+    return data;
+  },
+
+  /**
    * Send a message and stream the assistant reply (SSE).
    * @param {string} userMessage
    * @param {string} sessionId

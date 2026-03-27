@@ -391,3 +391,17 @@ def get_rag_system() -> RAGSystem:
     if _rag_instance is None:
         _rag_instance = RAGSystem()
     return _rag_instance
+
+
+def reload_rag_system() -> RAGSystem:
+    """Force rebuild/load of the singleton RAG instance."""
+    global _rag_instance
+    _rag_instance = RAGSystem()
+    return _rag_instance
+
+
+def reload_rag_system() -> RAGSystem:
+    """Force rebuild/load of the singleton RAG instance."""
+    global _rag_instance
+    _rag_instance = RAGSystem()
+    return _rag_instance
