@@ -1,4 +1,6 @@
 import csv
+import hashlib
+import json
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
@@ -7,7 +9,7 @@ from langchain_core.documents import Document
 from langchain_classic.chains import create_retrieval_chain
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from PyPDF2 import PdfReader
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Any
 from pathlib import Path
 
 class RAGSystem:
@@ -24,6 +26,10 @@ class RAGSystem:
             temperature=0.0,
             streaming=True,
         )
+        self.kb_path = Path(__file__).parent.parent / "knowledge_base"
+        self.vector_store_dir = Path(__file__).parent.parent / "vector_store"
+        self.vector_store_path = self.vector_store_dir / "faiss_index"
+        self.manifest_path = self.vector_store_dir / "manifest.json"
         self.vector_store = None
         self.retriever = None
         self._initialize_knowledge_base()
@@ -32,26 +38,42 @@ class RAGSystem:
     # Knowledge base setup
     # -------------------------
     def _initialize_knowledge_base(self):
-        documents = self._load_knowledge_documents()
+        self.kb_path.mkdir(exist_ok=True)
+        self.vector_store_dir.mkdir(exist_ok=True)
+        current_manifest = self._build_kb_manifest()
 
-        if not documents:
-            dummy_doc = Document(
-                page_content="This is a demo RAG system.",
-                metadata={"source": "demo", "page": 1}
+        if self._can_use_cached_index(current_manifest):
+            self.vector_store = FAISS.load_local(
+                str(self.vector_store_path),
+                self.embeddings,
+                allow_dangerous_deserialization=True,
             )
-            self.vector_store = FAISS.from_documents(
-                [dummy_doc], self.embeddings
-            )
+            print("Loaded cached vector store from disk.")
         else:
-            splitter = RecursiveCharacterTextSplitter(
-                chunk_size=1000,
-                chunk_overlap=200
-            )
-            chunks = splitter.split_documents(documents)
+            print("Rebuilding vector store (knowledge base changed or cache missing).")
+            documents = self._load_knowledge_documents()
 
-            self.vector_store = FAISS.from_documents(
-                chunks, self.embeddings
-            )
+            if not documents:
+                dummy_doc = Document(
+                    page_content="This is a demo RAG system.",
+                    metadata={"source": "demo", "page": 1}
+                )
+                self.vector_store = FAISS.from_documents(
+                    [dummy_doc], self.embeddings
+                )
+            else:
+                splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=1000,
+                    chunk_overlap=200
+                )
+                chunks = splitter.split_documents(documents)
+                self.vector_store = FAISS.from_documents(
+                    chunks, self.embeddings
+                )
+
+            self.vector_store.save_local(str(self.vector_store_path))
+            self._write_manifest(current_manifest)
+            print("Vector store saved to disk.")
 
         self.retriever = self.vector_store.as_retriever(
             search_kwargs={"k": 3}
@@ -59,10 +81,8 @@ class RAGSystem:
 
     def _load_knowledge_documents(self) -> List[Document]:
         documents = []
-        kb_path = Path(__file__).parent.parent / "knowledge_base"
-        kb_path.mkdir(exist_ok=True)
 
-        for file_path in kb_path.iterdir():
+        for file_path in self.kb_path.iterdir():
             if not file_path.is_file():
                 continue
 
@@ -161,6 +181,51 @@ class RAGSystem:
                 )
 
         return docs
+
+    def _build_kb_manifest(self) -> Dict[str, Any]:
+        files = []
+        supported_exts = {".pdf", ".txt", ".md", ".docx", ".csv"}
+
+        for file_path in sorted(self.kb_path.iterdir(), key=lambda p: p.name.lower()):
+            if not file_path.is_file() or file_path.suffix.lower() not in supported_exts:
+                continue
+
+            files.append(
+                {
+                    "name": file_path.name,
+                    "size": file_path.stat().st_size,
+                    "sha256": self._file_sha256(file_path),
+                }
+            )
+
+        combined_hash = hashlib.sha256(
+            json.dumps(files, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        return {"version": 1, "files": files, "combined_hash": combined_hash}
+
+    def _file_sha256(self, file_path: Path) -> str:
+        hasher = hashlib.sha256()
+        with file_path.open("rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                hasher.update(chunk)
+        return hasher.hexdigest()
+
+    def _can_use_cached_index(self, current_manifest: Dict[str, Any]) -> bool:
+        if not self.vector_store_path.exists() or not self.manifest_path.exists():
+            return False
+
+        try:
+            saved_manifest = json.loads(self.manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            return False
+
+        return saved_manifest.get("combined_hash") == current_manifest.get("combined_hash")
+
+    def _write_manifest(self, manifest: Dict[str, Any]) -> None:
+        self.manifest_path.write_text(
+            json.dumps(manifest, indent=2),
+            encoding="utf-8",
+        )
 
     # -------------------------
     # Chat

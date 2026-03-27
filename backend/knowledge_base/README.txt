@@ -7,6 +7,7 @@ TO ADD DOCUMENTS:
 1. Place supported files in this directory (.pdf, .txt, .md, .docx, .csv)
 2. The RAG system will automatically load and index them
 3. Restart the Django server for changes to take effect
+4. Embeddings are cached in backend/vector_store/ and rebuilt only when docs change
 
 EXAMPLE:
 If you add "company_handbook.pdf" or "company_handbook.docx", the system will extract text and create embeddings.
