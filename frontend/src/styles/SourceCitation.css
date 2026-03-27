@@ -1,0 +1,155 @@
+/* Sources chip + popover, similar to modern AI UIs */
+.source-citation {
+  position: relative;
+  margin-top: 0.5rem;
+  display: inline-block;
+}
+
+.source-citation__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: #374151;
+  background: #f3f4f6;
+  border-radius: 999px;
+  border: 1px solid #e5e7eb;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.source-citation__trigger:hover {
+  background: #e5e7eb;
+  border-color: #d1d5db;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.source-citation__trigger:focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: 2px;
+}
+
+.source-citation__trigger-icon {
+  color: #6b7280;
+}
+
+.source-citation__trigger-text {
+  text-transform: none;
+}
+
+.source-citation__trigger-count {
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 0.25rem;
+  border-radius: 999px;
+  background: #e0e7ff;
+  color: #4338ca;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 0.7rem;
+}
+
+.source-citation__popover {
+  position: absolute;
+  top: 130%;
+  left: 0;
+  z-index: 20;
+  min-width: 220px;
+  max-width: 320px;
+  max-height: 260px;
+  padding: 0.5rem 0.75rem 0.75rem;
+  background: #ffffff;
+  border-radius: 0.75rem;
+  border: 1px solid rgba(148, 163, 184, 0.5);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
+}
+
+.source-citation__popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.25rem;
+}
+
+.source-citation__popover-title {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #6b7280;
+  font-weight: 600;
+}
+
+.source-citation__close {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.9rem;
+  line-height: 1;
+  color: #9ca3af;
+  padding: 0.1rem 0.25rem;
+  border-radius: 999px;
+}
+
+.source-citation__close:hover {
+  background: #f3f4f6;
+  color: #4b5563;
+}
+
+.source-citation__popover-body {
+  margin-top: 0.25rem;
+  max-height: 210px;
+  overflow-y: auto;
+  padding-right: 0.15rem;
+}
+
+.source-citation__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  padding: 0.35rem 0;
+  font-size: 0.8rem;
+  color: #374151;
+}
+
+.source-citation__item + .source-citation__item {
+  border-top: 1px solid rgba(229, 231, 235, 0.7);
+}
+
+.source-citation__item-icon {
+  margin-top: 0.1rem;
+  flex-shrink: 0;
+  color: #9ca3af;
+}
+
+.source-citation__item-text {
+  min-width: 0;
+}
+
+.source-citation__name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-citation__page {
+  display: block;
+  font-size: 0.75rem;
+  color: #6366f1;
+}
+
+@media (max-width: 768px) {
+  .source-citation {
+    margin-top: 0.375rem;
+  }
+
+  .source-citation__popover {
+    left: 0;
+    right: auto;
+    max-width: 260px;
+  }
+}
