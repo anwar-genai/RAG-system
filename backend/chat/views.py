@@ -31,10 +31,6 @@ def _get_or_create_session(session_id, user):
     return ChatSession.objects.create(user=user)
 
 
-def _user_role(user):
-    return user.profile.role if hasattr(user, 'profile') else 'user'
-
-
 # ---------------------------------------------------------------------------
 # Auth
 # ---------------------------------------------------------------------------
@@ -54,7 +50,11 @@ def register_user(request):
     if User.objects.filter(username=username).exists():
         return Response({"error": "Username is already taken."}, status=status.HTTP_400_BAD_REQUEST)
 
-    User.objects.create_user(username=username, password=password)
+    user = User.objects.create_user(username=username, password=password)
+    # First user ever becomes admin; all others are regular users
+    from .models import UserProfile
+    role = 'admin' if not UserProfile.objects.filter(role='admin').exists() else 'user'
+    UserProfile.objects.get_or_create(user=user, defaults={'role': role})
     return Response({"message": "Account created. You can now sign in."}, status=status.HTTP_201_CREATED)
 
 
@@ -198,19 +198,22 @@ def get_session(request, session_id):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def list_sessions(request):
-    """List all sessions for the current user, newest first."""
+    """List all sessions for the current user, newest first, with a preview title."""
     sessions = ChatSession.objects.filter(user=request.user).annotate(
         message_count=Count('messages')
     ).order_by('-updated_at')
-    data = [
-        {
+
+    data = []
+    for s in sessions:
+        first_msg = s.messages.filter(message_type='user').order_by('created_at').first()
+        title = (first_msg.content[:60] + '…') if first_msg and len(first_msg.content) > 60 else (first_msg.content if first_msg else 'New conversation')
+        data.append({
             "session_id": str(s.session_id),
+            "title": title,
             "message_count": s.message_count,
             "created_at": s.created_at,
             "updated_at": s.updated_at,
-        }
-        for s in sessions
-    ]
+        })
     return Response(data)
 
 
@@ -285,7 +288,7 @@ def upload_documents(request):
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated, IsAdminRole])
-def admin_stats(request):
+def admin_stats(_request):
     """System-wide overview stats for the admin dashboard."""
     kb_path = Path(__file__).parent.parent / "knowledge_base"
     kb_size = sum(f.stat().st_size for f in kb_path.iterdir() if f.is_file()) if kb_path.exists() else 0
@@ -373,7 +376,7 @@ def admin_user_detail(request, user_id):
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated, IsAdminRole])
-def admin_documents(request):
+def admin_documents(_request):
     """List all knowledge base documents (DB records merged with filesystem)."""
     kb_path = Path(__file__).parent.parent / "knowledge_base"
     allowed_exts = {".pdf", ".txt", ".md", ".docx", ".csv"}

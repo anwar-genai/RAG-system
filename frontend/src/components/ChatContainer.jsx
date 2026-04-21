@@ -1,264 +1,303 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import chatService from '../services/api';
 import MessageBubble from './MessageBubble';
 import MessageInput from './MessageInput';
 import '../styles/ChatContainer.css';
+
+const EXAMPLE_PROMPTS = [
+  'What are the key topics covered in the documents?',
+  'Summarize the main policies in the handbook.',
+  'What file formats are supported for upload?',
+  'How does the retrieval system work?',
+];
 
 export default function ChatContainer({ onLogout, onAdmin, currentUser }) {
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [sessionId, setSessionId] = useState(null);
+  const [sessions, setSessions] = useState([]);
   const [error, setError] = useState(null);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
 
-  useEffect(() => {
-    // Initialize session on mount
-    initializeSession();
+  const loadSessions = useCallback(async () => {
+    try {
+      const data = await chatService.listSessions();
+      setSessions(data);
+    } catch { /* non-critical */ }
   }, []);
 
   useEffect(() => {
-    // Scroll to bottom when new messages arrive
-    scrollToBottom();
+    initializeSession();
+    loadSessions();
+  }, []);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
   const initializeSession = async () => {
-    try {
-      // Check if session exists in localStorage
-      const savedSessionId = localStorage.getItem('chat_session_id');
-
-      if (savedSessionId) {
-        setSessionId(savedSessionId);
-        // Optionally load previous messages
-        try {
-          const session = await chatService.getSession(savedSessionId);
-          const formattedMessages = session.messages.map(msg => ({
-            type: msg.message_type,
-            content: msg.content,
-            sources: msg.sources || [],
-            id: msg.id,
-          }));
-          setMessages(formattedMessages);
-        } catch (err) {
-          // Session expired or invalid, create new one
-          createNewSession();
-        }
-      } else {
-        createNewSession();
-      }
-    } catch (err) {
-      setError('Failed to initialize session');
-      console.error(err);
+    const saved = localStorage.getItem('chat_session_id');
+    if (saved) {
+      setSessionId(saved);
+      try {
+        const session = await chatService.getSession(saved);
+        setMessages(session.messages.map(m => ({
+          type: m.message_type, content: m.content, sources: m.sources || [], id: m.id,
+        })));
+        return;
+      } catch { /* fall through to create new */ }
     }
+    createNewSession();
   };
 
   const createNewSession = async () => {
     try {
-      const response = await chatService.createSession();
-      const newSessionId = response.session_id;
-      setSessionId(newSessionId);
-      localStorage.setItem('chat_session_id', newSessionId);
+      const res = await chatService.createSession();
+      setSessionId(res.session_id);
+      localStorage.setItem('chat_session_id', res.session_id);
       setMessages([]);
-    } catch (err) {
-      setError('Failed to create new session');
-      console.error(err);
+      await loadSessions();
+    } catch {
+      setError('Failed to create session.');
+    }
+  };
+
+  const switchSession = async (sid) => {
+    try {
+      const session = await chatService.getSession(sid);
+      setSessionId(sid);
+      localStorage.setItem('chat_session_id', sid);
+      setMessages(session.messages.map(m => ({
+        type: m.message_type, content: m.content, sources: m.sources || [], id: m.id,
+      })));
+      setError(null);
+    } catch {
+      setError('Could not load session.');
     }
   };
 
   const handleSendMessage = async (userMessage) => {
     if (!userMessage.trim() || !sessionId) return;
+    setError(null);
+    setLoading(true);
+
+    setMessages(prev => [
+      ...prev,
+      { type: 'user', content: userMessage, sources: [], id: null },
+      { type: 'assistant', content: '', sources: [], id: null },
+    ]);
 
     try {
-      setError(null);
-      setLoading(true);
-
-      // Add user message to UI immediately
-      setMessages(prev => [...prev, {
-        type: 'user',
-        content: userMessage,
-        sources: [],
-        id: null,
-      }]);
-
-      // Add placeholder for streaming assistant message
-      setMessages(prev => [...prev, {
-        type: 'assistant',
-        content: '',
-        sources: [],
-        id: null,
-      }]);
-
       await chatService.sendMessageStream(userMessage, sessionId, {
         onChunk: (chunk) => {
           setMessages(prev => {
             const next = [...prev];
-            const last = next[next.length - 1];
-            next[next.length - 1] = { ...last, content: last.content + chunk };
+            const last = { ...next[next.length - 1] };
+            last.content += chunk;
+            next[next.length - 1] = last;
             return next;
           });
         },
         onDone: (data) => {
           setMessages(prev => {
             const next = [...prev];
-            const last = next[next.length - 1];
             next[next.length - 1] = {
-              ...last,
+              ...next[next.length - 1],
               sources: data.sources || [],
-              id: data.message_id ?? last.id,
+              id: data.message_id ?? null,
             };
             return next;
           });
+          loadSessions();
         },
       });
     } catch (err) {
       setError('Failed to send message. Please try again.');
-      console.error(err);
-      // Remove user message and empty assistant message if send failed
       setMessages(prev => prev.slice(0, -2));
     } finally {
       setLoading(false);
     }
   };
 
-  const handleNewChat = async () => {
-    await createNewSession();
-    setError(null);
-  };
-
-  const handleUploadClick = () => {
-    fileInputRef.current?.click();
-  };
-
-  const handleFilesSelected = async (event) => {
-    const files = Array.from(event.target.files || []);
+  const handleFilesSelected = async (e) => {
+    const files = Array.from(e.target.files || []);
     if (!files.length) return;
-
+    setUploading(true);
+    setError(null);
     try {
-      setError(null);
-      setUploading(true);
       const result = await chatService.uploadDocuments(files);
-      const uploadedCount = result.uploaded?.length || 0;
-      const skippedCount = result.skipped?.length || 0;
-      let message = `Uploaded ${uploadedCount} file${uploadedCount === 1 ? '' : 's'} and refreshed index.`;
-      if (skippedCount > 0) {
-        message += ` Skipped ${skippedCount} unsupported file${skippedCount === 1 ? '' : 's'}.`;
-      }
-      setMessages((prev) => [
-        ...prev,
-        { type: 'assistant', content: message, sources: [], id: null },
-      ]);
+      const count = result.uploaded?.length || 0;
+      setMessages(prev => [...prev, {
+        type: 'assistant',
+        content: `✓ ${count} file${count !== 1 ? 's' : ''} uploaded and indexed successfully.${result.skipped?.length ? ` (${result.skipped.length} skipped — unsupported format)` : ''}`,
+        sources: [], id: null,
+      }]);
     } catch (err) {
-      setError(err.message || 'Failed to upload documents');
-      console.error(err);
+      setError(err.message || 'Upload failed.');
     } finally {
       setUploading(false);
-      event.target.value = '';
+      e.target.value = '';
     }
   };
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  // Group sessions by date
+  const groupSessions = () => {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
+    const groups = { Today: [], Yesterday: [], Earlier: [] };
+    sessions.forEach(s => {
+      const d = new Date(s.updated_at); d.setHours(0, 0, 0, 0);
+      if (d >= today) groups.Today.push(s);
+      else if (d >= yesterday) groups.Yesterday.push(s);
+      else groups.Earlier.push(s);
+    });
+    return groups;
   };
 
+  const groups = groupSessions();
+
   return (
-    <div className="chat-container">
-      <div className="chat-header">
-        <h1>RAG Chat Assistant</h1>
-        <div className="chat-header-actions">
-          <button
-            type="button"
-            className="new-chat-btn"
-            onClick={handleNewChat}
-            title="Start a new chat (current conversation will be cleared)"
-            aria-label="Start new chat"
-            disabled={uploading}
-          >
-            New Chat
-          </button>
-          <button
-            type="button"
-            className="upload-doc-btn"
-            onClick={handleUploadClick}
-            title="Upload docs (.pdf, .txt, .md, .docx, .csv)"
-            aria-label="Upload documents"
-            disabled={uploading || loading}
-          >
-            {uploading ? 'Uploading...' : 'Upload Docs'}
-          </button>
-          {onAdmin && (
-            <button
-              type="button"
-              className="new-chat-btn"
-              onClick={onAdmin}
-              title="Admin panel"
-              aria-label="Admin panel"
-            >
-              Admin
-            </button>
-          )}
-          {onLogout && (
-            <button
-              type="button"
-              className="new-chat-btn"
-              onClick={onLogout}
-              title="Sign out"
-              aria-label="Sign out"
-            >
-              Sign Out
-            </button>
-          )}
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept=".pdf,.txt,.md,.docx,.csv"
-            className="upload-input"
-            onChange={handleFilesSelected}
-          />
+    <div className="app-shell">
+      {/* ── Sidebar ─────────────────────────────────────── */}
+      <aside className={`sidebar ${sidebarOpen ? 'sidebar--open' : 'sidebar--closed'}`}>
+        {/* Logo */}
+        <div className="sidebar-logo">
+          <div className="sidebar-logo-icon">
+            <svg width="20" height="20" viewBox="0 0 32 32" fill="none">
+              <path d="M8 16C8 11.582 11.582 8 16 8s8 3.582 8 8-3.582 8-8 8-8-3.582-8-8z" fill="white" fillOpacity="0.4"/>
+              <path d="M12 16l3 3 5-6" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </div>
+          {sidebarOpen && <span className="sidebar-logo-text">DocuChat</span>}
         </div>
-      </div>
 
-      <div className="messages-area">
-        {messages.length === 0 && (
-          <div className="empty-state">
-            <h2>Welcome to RAG Chat</h2>
-            <p>Ask me anything about the documents in our knowledge base.</p>
-            <p className="session-id">Session ID: {sessionId?.substring(0, 8)}...</p>
+        {/* New Chat */}
+        <button className="new-chat-btn" onClick={() => { createNewSession(); setError(null); }}>
+          <span className="new-chat-icon">+</span>
+          {sidebarOpen && <span>New Chat</span>}
+        </button>
+
+        {/* Session list */}
+        {sidebarOpen && (
+          <div className="session-list">
+            {Object.entries(groups).map(([label, items]) =>
+              items.length === 0 ? null : (
+                <div key={label} className="session-group">
+                  <div className="session-group-label">{label}</div>
+                  {items.map(s => (
+                    <button
+                      key={s.session_id}
+                      className={`session-item ${s.session_id === sessionId ? 'session-item--active' : ''}`}
+                      onClick={() => switchSession(s.session_id)}
+                      title={s.title}
+                    >
+                      <span className="session-item-title">{s.title}</span>
+                      <span className="session-item-count">{s.message_count}</span>
+                    </button>
+                  ))}
+                </div>
+              )
+            )}
+            {sessions.length === 0 && (
+              <div className="session-empty">No conversations yet</div>
+            )}
           </div>
         )}
 
-        {messages.map((message, index) => (
-          <MessageBubble
-            key={index}
-            message={message}
-            isUser={message.type === 'user'}
-          />
-        ))}
+        {/* Bottom actions */}
+        <div className="sidebar-footer">
+          {sidebarOpen && (
+            <>
+              <button className="sidebar-action-btn" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                {uploading ? 'Uploading…' : 'Upload Docs'}
+              </button>
+              <input ref={fileInputRef} type="file" multiple accept=".pdf,.txt,.md,.docx,.csv" style={{ display: 'none' }} onChange={handleFilesSelected} />
+            </>
+          )}
+          <div className="sidebar-user">
+            <div className="sidebar-avatar">{(currentUser?.username?.[0] || 'U').toUpperCase()}</div>
+            {sidebarOpen && (
+              <div className="sidebar-user-info">
+                <span className="sidebar-username">{currentUser?.username || 'User'}</span>
+                <span className={`sidebar-role-badge ${currentUser?.role === 'admin' ? 'badge-admin' : 'badge-user'}`}>
+                  {currentUser?.role || 'user'}
+                </span>
+              </div>
+            )}
+            {sidebarOpen && (
+              <div className="sidebar-user-actions">
+                {onAdmin && (
+                  <button className="icon-btn" onClick={onAdmin} title="Admin Panel">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                  </button>
+                )}
+                <button className="icon-btn" onClick={onLogout} title="Sign out">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </aside>
 
-        {loading && (!messages.length || messages[messages.length - 1]?.type !== 'assistant') && (
-          <div className="loading-bubble">
-            <div className="typing-indicator">
-              <span></span>
-              <span></span>
-              <span></span>
+      {/* ── Main area ───────────────────────────────────── */}
+      <main className="main-area">
+        {/* Top bar */}
+        <header className="topbar">
+          <button className="toggle-btn" onClick={() => setSidebarOpen(o => !o)} title="Toggle sidebar">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+          </button>
+          <span className="topbar-title">
+            {sessions.find(s => s.session_id === sessionId)?.title || 'New conversation'}
+          </span>
+        </header>
+
+        {/* Messages */}
+        <div className="messages-area">
+          {messages.length === 0 && (
+            <div className="empty-state">
+              <div className="empty-icon">
+                <svg width="40" height="40" viewBox="0 0 32 32" fill="none">
+                  <rect width="32" height="32" rx="8" fill="#ede9fe"/>
+                  <path d="M8 16C8 11.582 11.582 8 16 8s8 3.582 8 8-3.582 8-8 8-8-3.582-8-8z" fill="#a78bfa"/>
+                  <path d="M12 16l3 3 5-6" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </div>
+              <h2 className="empty-title">How can I help you today?</h2>
+              <p className="empty-sub">Ask a question about your documents or choose an example below.</p>
+              <div className="prompt-grid">
+                {EXAMPLE_PROMPTS.map(p => (
+                  <button key={p} className="prompt-chip" onClick={() => handleSendMessage(p)}>
+                    {p}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        <div ref={messagesEndRef} />
-      </div>
+          {messages.map((msg, i) => (
+            <MessageBubble key={i} message={msg} isUser={msg.type === 'user'} />
+          ))}
 
-      {error && (
-        <div className="error-message">
-          {error}
+          {loading && messages[messages.length - 1]?.content === '' && (
+            <div className="typing-wrap">
+              <div className="typing-indicator">
+                <span /><span /><span />
+              </div>
+            </div>
+          )}
+
+          {error && <div className="error-toast">{error}</div>}
+          <div ref={messagesEndRef} />
         </div>
-      )}
 
-      <MessageInput
-        onSendMessage={handleSendMessage}
-        disabled={loading}
-      />
+        {/* Input */}
+        <MessageInput onSendMessage={handleSendMessage} disabled={loading || !sessionId} />
+      </main>
     </div>
   );
 }
