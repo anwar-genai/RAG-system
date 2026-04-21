@@ -1,6 +1,5 @@
 import axios from 'axios';
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
+import { API_BASE_URL } from '../config';
 
 export const authService = {
   async login(username, password) {
@@ -11,13 +10,13 @@ export const authService = {
   },
 
   async logout() {
-    const refresh = localStorage.getItem('refresh_token');
+    const refresh = this.getRefreshToken();
     if (refresh) {
       try {
         await axios.post(
           `${API_BASE_URL}/auth/logout/`,
           { refresh },
-          { headers: { Authorization: `Bearer ${localStorage.getItem('access_token')}` } },
+          { headers: { Authorization: `Bearer ${this.getAccessToken()}` } },
         );
       } catch {
         // Ignore errors — tokens are cleared regardless

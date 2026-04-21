@@ -27,11 +27,7 @@ _CONTROL_CHAR_RE = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]')
 
 
 def sanitize_message(text: str) -> tuple[bool, str]:
-    """
-    Validate and clean a user message.
-    Returns (is_safe, cleaned_text_or_error_reason).
-    Cheap checks run first so the OpenAI moderation API (Phase 1.7) is a last resort.
-    """
+    """Returns (is_safe, cleaned_text) or (False, error_reason) without touching the network."""
     text = text.strip()
 
     if not text:

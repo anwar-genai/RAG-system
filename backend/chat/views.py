@@ -43,8 +43,7 @@ def chat_endpoint(request):
         return Response({"error": result}, status=status.HTTP_400_BAD_REQUEST)
     user_message = result
 
-    is_safe, reason = is_content_safe(user_message)
-    if not is_safe:
+    if not is_content_safe(user_message)[0]:
         return Response({"error": "Message not allowed."}, status=status.HTTP_400_BAD_REQUEST)
 
     session = _get_or_create_session(session_id, request.user)
@@ -152,8 +151,7 @@ def chat_stream_endpoint(request):
         return Response({"error": result}, status=status.HTTP_400_BAD_REQUEST)
     user_message = result
 
-    is_safe, reason = is_content_safe(user_message)
-    if not is_safe:
+    if not is_content_safe(user_message)[0]:
         return Response({"error": "Message not allowed."}, status=status.HTTP_400_BAD_REQUEST)
 
     session = _get_or_create_session(session_id, request.user)
