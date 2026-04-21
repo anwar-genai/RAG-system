@@ -4,7 +4,7 @@ import MessageBubble from './MessageBubble';
 import MessageInput from './MessageInput';
 import '../styles/ChatContainer.css';
 
-export default function ChatContainer() {
+export default function ChatContainer({ onLogout }) {
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -186,6 +186,17 @@ export default function ChatContainer() {
           >
             {uploading ? 'Uploading...' : 'Upload Docs'}
           </button>
+          {onLogout && (
+            <button
+              type="button"
+              className="new-chat-btn"
+              onClick={onLogout}
+              title="Sign out"
+              aria-label="Sign out"
+            >
+              Sign Out
+            </button>
+          )}
           <input
             ref={fileInputRef}
             type="file"
