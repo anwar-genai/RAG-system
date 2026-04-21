@@ -2,7 +2,8 @@ import json
 import os
 from pathlib import Path
 from django.http import StreamingHttpResponse
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
 import uuid
@@ -10,86 +11,82 @@ import uuid
 from .models import ChatSession, Message
 from .serializers import ChatRequestSerializer, ChatResponseSerializer, ChatSessionSerializer
 from .rag import get_rag_system, reload_rag_system
+from .sanitizers import sanitize_message
+from .moderation import is_content_safe
+from .throttles import ChatRateThrottle, UploadRateThrottle
+
+
+def _get_or_create_session(session_id, user):
+    """Get an existing session owned by user, or create a new one."""
+    if session_id:
+        try:
+            return ChatSession.objects.get(session_id=session_id, user=user)
+        except ChatSession.DoesNotExist:
+            pass
+    session = ChatSession.objects.create(user=user)
+    return session
 
 
 @api_view(['POST'])
+@permission_classes([IsAuthenticated])
+@throttle_classes([ChatRateThrottle])
 def chat_endpoint(request):
-    """
-    API endpoint for chat interactions
-
-    Expected JSON payload:
-    {
-        "session_id": "optional-uuid",
-        "user_message": "Your question here"
-    }
-
-    Response:
-    {
-        "answer": "AI response",
-        "sources": ["Document.pdf - Page 2"],
-        "session_id": "uuid",
-        "message_id": 1
-    }
-    """
     serializer = ChatRequestSerializer(data=request.data)
-
     if not serializer.is_valid():
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    # Get or create session
     session_id = serializer.validated_data.get('session_id')
     user_message = serializer.validated_data.get('user_message')
 
-    try:
-        if session_id:
-            session = ChatSession.objects.get(session_id=session_id)
-        else:
-            session = ChatSession.objects.create()
-            session_id = session.session_id
+    is_safe, result = sanitize_message(user_message)
+    if not is_safe:
+        return Response({"error": result}, status=status.HTTP_400_BAD_REQUEST)
+    user_message = result
 
-    except ChatSession.DoesNotExist:
-        session = ChatSession.objects.create()
-        session_id = session.session_id
+    if not is_content_safe(user_message)[0]:
+        return Response({"error": "Message not allowed."}, status=status.HTTP_400_BAD_REQUEST)
 
-    # Save user message
+    session = _get_or_create_session(session_id, request.user)
+    session_id = session.session_id
+
     user_msg_obj = Message.objects.create(
         session=session,
         message_type='user',
-        content=user_message
+        content=user_message,
     )
 
-    # Get chat history for context
-    chat_history = list(session.messages.exclude(id=user_msg_obj.id).values('message_type', 'content').order_by('-created_at'))
+    chat_history = list(
+        session.messages.exclude(id=user_msg_obj.id)
+        .values('message_type', 'content')
+        .order_by('-created_at')
+    )
     chat_history = [{'type': msg['message_type'], 'content': msg['content']} for msg in chat_history]
 
-    # Get RAG system and generate response
     rag_system = get_rag_system()
-
     try:
         answer, sources = rag_system.chat(user_message, chat_history)
     except Exception as e:
         return Response(
             {"error": f"Error generating response: {str(e)}"},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
-    # Save AI message
     ai_msg_obj = Message.objects.create(
         session=session,
         message_type='assistant',
         content=answer,
-        sources=sources
+        sources=sources,
     )
 
-    # Return response
-    response_data = {
-        'answer': answer,
-        'sources': sources,
-        'session_id': str(session_id),
-        'message_id': ai_msg_obj.id
-    }
-
-    return Response(response_data, status=status.HTTP_200_OK)
+    return Response(
+        {
+            'answer': answer,
+            'sources': sources,
+            'session_id': str(session_id),
+            'message_id': ai_msg_obj.id,
+        },
+        status=status.HTTP_200_OK,
+    )
 
 
 def _stream_chat_generator(session, user_message, user_msg_obj):
@@ -106,6 +103,7 @@ def _stream_chat_generator(session, user_message, user_msg_obj):
 
     rag_system = get_rag_system()
     full_answer = []
+    ai_msg_obj = None
 
     try:
         for event in rag_system.chat_stream(user_message, chat_history):
@@ -126,14 +124,21 @@ def _stream_chat_generator(session, user_message, user_msg_obj):
                 yield f"data: {json.dumps({'t': 'done', 'sources': sources, 'message_id': ai_msg_obj.id})}\n\n"
     except Exception as e:
         yield f"data: {json.dumps({'t': 'error', 'error': str(e)})}\n\n"
+    finally:
+        # Ensure message is saved even if client disconnects mid-stream
+        if full_answer and ai_msg_obj is None:
+            Message.objects.create(
+                session=session,
+                message_type="assistant",
+                content="".join(full_answer),
+                sources=[],
+            )
 
 
 @api_view(["POST"])
+@permission_classes([IsAuthenticated])
+@throttle_classes([ChatRateThrottle])
 def chat_stream_endpoint(request):
-    """
-    Streaming chat: POST with session_id, user_message.
-    Response: SSE stream of data: {"t": "chunk", "content": "..."} then {"t": "done", "sources": [...], "message_id": 1}.
-    """
     serializer = ChatRequestSerializer(data=request.data)
     if not serializer.is_valid():
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -141,13 +146,15 @@ def chat_stream_endpoint(request):
     session_id = serializer.validated_data.get("session_id")
     user_message = serializer.validated_data.get("user_message")
 
-    try:
-        if session_id:
-            session = ChatSession.objects.get(session_id=session_id)
-        else:
-            session = ChatSession.objects.create()
-    except ChatSession.DoesNotExist:
-        session = ChatSession.objects.create()
+    is_safe, result = sanitize_message(user_message)
+    if not is_safe:
+        return Response({"error": result}, status=status.HTTP_400_BAD_REQUEST)
+    user_message = result
+
+    if not is_content_safe(user_message)[0]:
+        return Response({"error": "Message not allowed."}, status=status.HTTP_400_BAD_REQUEST)
+
+    session = _get_or_create_session(session_id, request.user)
 
     user_msg_obj = Message.objects.create(
         session=session,
@@ -165,32 +172,30 @@ def chat_stream_endpoint(request):
 
 
 @api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def get_session(request, session_id):
-    """Get chat session with all messages"""
+    """Get chat session with all messages. Only returns sessions owned by the requesting user."""
     try:
-        session = ChatSession.objects.get(session_id=session_id)
+        session = ChatSession.objects.get(session_id=session_id, user=request.user)
         serializer = ChatSessionSerializer(session)
         return Response(serializer.data)
     except ChatSession.DoesNotExist:
-        return Response(
-            {"error": "Session not found"},
-            status=status.HTTP_404_NOT_FOUND
-        )
+        return Response({"error": "Session not found"}, status=status.HTTP_404_NOT_FOUND)
 
 
 @api_view(['POST'])
+@permission_classes([IsAuthenticated])
 def create_session(request):
-    """Create a new chat session"""
-    session = ChatSession.objects.create()
+    """Create a new chat session owned by the requesting user."""
+    session = ChatSession.objects.create(user=request.user)
     return Response({"session_id": str(session.session_id)}, status=status.HTTP_201_CREATED)
 
 
 @api_view(["POST"])
+@permission_classes([IsAuthenticated])
+@throttle_classes([UploadRateThrottle])
 def upload_documents(request):
-    """
-    Upload one or more knowledge files and refresh the RAG index.
-    Form field: files (supports multiple files).
-    """
+    """Upload one or more knowledge files and refresh the RAG index."""
     uploaded_files = request.FILES.getlist("files")
     if not uploaded_files:
         single = request.FILES.get("file")

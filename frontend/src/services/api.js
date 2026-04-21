@@ -1,111 +1,95 @@
 import axios from 'axios';
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
+import authService from './auth';
+import { API_BASE_URL } from '../config';
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
-  headers: {
-    'Content-Type': 'application/json',
-  },
+  headers: { 'Content-Type': 'application/json' },
 });
 
-export const chatService = {
-  /**
-   * Send a message to the chat API
-   * @param {string} userMessage - The user's message
-   * @param {string} sessionId - Optional session ID
-   * @returns {Promise} Response with answer, sources, and session_id
-   */
-  sendMessage: async (userMessage, sessionId = null) => {
-    try {
-      const payload = {
-        user_message: userMessage,
-      };
+// Inject access token on every request
+apiClient.interceptors.request.use((config) => {
+  const token = authService.getAccessToken();
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
 
-      if (sessionId) {
-        payload.session_id = sessionId;
+// On 401, attempt a silent token refresh then retry once
+apiClient.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const original = error.config;
+    if (error.response?.status === 401 && !original._retry) {
+      original._retry = true;
+      const refresh = authService.getRefreshToken();
+      if (refresh) {
+        try {
+          const res = await axios.post(`${API_BASE_URL}/auth/token/refresh/`, { refresh });
+          authService.setAccessToken(res.data.access);
+          original.headers.Authorization = `Bearer ${res.data.access}`;
+          return apiClient(original);
+        } catch {
+          // Refresh failed — clear tokens so the login screen appears
+          authService.logout();
+          window.location.reload();
+        }
       }
-
-      const response = await apiClient.post('chat/', payload);
-      return response.data;
-    } catch (error) {
-      console.error('Error sending message:', error);
-      throw error;
     }
+    return Promise.reject(error);
+  },
+);
+
+export const chatService = {
+  sendMessage: async (userMessage, sessionId = null) => {
+    const payload = { user_message: userMessage };
+    if (sessionId) payload.session_id = sessionId;
+    const response = await apiClient.post('chat/', payload);
+    return response.data;
   },
 
-  /**
-   * Get chat session with all messages
-   * @param {string} sessionId - The session ID
-   * @returns {Promise} Session data with messages
-   */
   getSession: async (sessionId) => {
-    try {
-      const response = await apiClient.get(`session/${sessionId}/`);
-      return response.data;
-    } catch (error) {
-      console.error('Error fetching session:', error);
-      throw error;
-    }
+    const response = await apiClient.get(`session/${sessionId}/`);
+    return response.data;
   },
 
-  /**
-   * Create a new chat session
-   * @returns {Promise} New session data with session_id
-   */
   createSession: async () => {
-    try {
-      const response = await apiClient.post('session/');
-      return response.data;
-    } catch (error) {
-      console.error('Error creating session:', error);
-      throw error;
-    }
+    const response = await apiClient.post('session/');
+    return response.data;
   },
 
-  /**
-   * Upload knowledge-base documents and refresh backend index.
-   * @param {File[]} files
-   */
   uploadDocuments: async (files) => {
     const formData = new FormData();
     files.forEach((file) => formData.append('files', file));
-
-    const response = await fetch(`${API_BASE_URL}/documents/upload/`, {
-      method: 'POST',
-      body: formData,
+    const response = await apiClient.post('documents/upload/', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
     });
-
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(data.error || 'Failed to upload documents');
-    }
-    return data;
+    return response.data;
   },
 
-  /**
-   * Send a message and stream the assistant reply (SSE).
-   * @param {string} userMessage
-   * @param {string} sessionId
-   * @param {{ onChunk: (text: string) => void, onDone: (data: { sources: string[], message_id: number }) => void }} callbacks
-   */
   sendMessageStream: async (userMessage, sessionId, { onChunk, onDone }) => {
-    const baseURL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
-    const res = await fetch(`${baseURL}/chat/stream/`, {
+    const res = await fetch(`${API_BASE_URL}/chat/stream/`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${authService.getAccessToken()}`,
+      },
       body: JSON.stringify({
         user_message: userMessage,
         ...(sessionId && { session_id: sessionId }),
       }),
     });
+
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || res.statusText);
     }
+
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -127,6 +111,7 @@ export const chatService = {
         }
       }
     }
+
     if (buffer.trim()) {
       const line = buffer.trim();
       if (line.startsWith('data: ')) {

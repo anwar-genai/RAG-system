@@ -16,10 +16,16 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView, TokenBlacklistView
 from chat import views
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    # Auth
+    path('api/auth/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
+    path('api/auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    path('api/auth/logout/', TokenBlacklistView.as_view(), name='token_blacklist'),
+    # Chat
     path('api/chat/', views.chat_endpoint, name='chat_endpoint'),
     path('api/chat/stream/', views.chat_stream_endpoint, name='chat_stream_endpoint'),
     path('api/documents/upload/', views.upload_documents, name='upload_documents'),
