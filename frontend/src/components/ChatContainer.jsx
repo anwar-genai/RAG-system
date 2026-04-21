@@ -4,7 +4,7 @@ import MessageBubble from './MessageBubble';
 import MessageInput from './MessageInput';
 import '../styles/ChatContainer.css';
 
-export default function ChatContainer({ onLogout }) {
+export default function ChatContainer({ onLogout, onAdmin, currentUser }) {
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -186,6 +186,17 @@ export default function ChatContainer({ onLogout }) {
           >
             {uploading ? 'Uploading...' : 'Upload Docs'}
           </button>
+          {onAdmin && (
+            <button
+              type="button"
+              className="new-chat-btn"
+              onClick={onAdmin}
+              title="Admin panel"
+              aria-label="Admin panel"
+            >
+              Admin
+            </button>
+          )}
           {onLogout && (
             <button
               type="button"

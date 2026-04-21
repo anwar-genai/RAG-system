@@ -122,4 +122,5 @@ export const chatService = {
   },
 };
 
+export { apiClient };
 export default chatService;

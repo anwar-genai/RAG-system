@@ -10,6 +10,8 @@ export const authService = {
     const response = await axios.post(`${API_BASE_URL}/auth/token/`, { username, password });
     localStorage.setItem('access_token', response.data.access);
     localStorage.setItem('refresh_token', response.data.refresh);
+    // Fetch and cache user profile
+    await this._fetchAndCacheMe();
     return response.data;
   },
 
@@ -28,6 +30,19 @@ export const authService = {
     }
     localStorage.removeItem('access_token');
     localStorage.removeItem('refresh_token');
+    localStorage.removeItem('user_profile');
+  },
+
+  async _fetchAndCacheMe() {
+    try {
+      const res = await axios.get(`${API_BASE_URL}/auth/me/`, {
+        headers: { Authorization: `Bearer ${this.getAccessToken()}` },
+      });
+      localStorage.setItem('user_profile', JSON.stringify(res.data));
+      return res.data;
+    } catch {
+      return null;
+    }
   },
 
   getAccessToken() {
@@ -38,12 +53,22 @@ export const authService = {
     return localStorage.getItem('refresh_token');
   },
 
+  setAccessToken(token) {
+    localStorage.setItem('access_token', token);
+  },
+
   isLoggedIn() {
     return !!localStorage.getItem('access_token');
   },
 
-  setAccessToken(token) {
-    localStorage.setItem('access_token', token);
+  getUser() {
+    const raw = localStorage.getItem('user_profile');
+    if (!raw) return null;
+    try { return JSON.parse(raw); } catch { return null; }
+  },
+
+  isAdmin() {
+    return this.getUser()?.role === 'admin';
   },
 };
 
