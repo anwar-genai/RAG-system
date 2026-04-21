@@ -2,6 +2,10 @@ import axios from 'axios';
 import { API_BASE_URL } from '../config';
 
 export const authService = {
+  async register(username, password) {
+    await axios.post(`${API_BASE_URL}/auth/register/`, { username, password });
+  },
+
   async login(username, password) {
     const response = await axios.post(`${API_BASE_URL}/auth/token/`, { username, password });
     localStorage.setItem('access_token', response.data.access);

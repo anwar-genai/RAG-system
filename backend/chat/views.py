@@ -1,9 +1,10 @@
 import json
 import os
 from pathlib import Path
+from django.contrib.auth.models import User
 from django.http import StreamingHttpResponse
 from rest_framework.decorators import api_view, permission_classes, throttle_classes
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 import uuid
@@ -254,3 +255,29 @@ def upload_documents(request):
         },
         status=status.HTTP_201_CREATED,
     )
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def register_user(request):
+    """
+    Create a new user account.
+    POST /api/auth/register/  { "username": "...", "password": "..." }
+    """
+    username = request.data.get("username", "").strip()
+    password = request.data.get("password", "")
+
+    if not username or not password:
+        return Response({"error": "Username and password are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+    if len(username) < 3:
+        return Response({"error": "Username must be at least 3 characters."}, status=status.HTTP_400_BAD_REQUEST)
+
+    if len(password) < 8:
+        return Response({"error": "Password must be at least 8 characters."}, status=status.HTTP_400_BAD_REQUEST)
+
+    if User.objects.filter(username=username).exists():
+        return Response({"error": "Username is already taken."}, status=status.HTTP_400_BAD_REQUEST)
+
+    User.objects.create_user(username=username, password=password)
+    return Response({"message": "Account created. You can now sign in."}, status=status.HTTP_201_CREATED)
