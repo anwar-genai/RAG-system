@@ -1,14 +1,23 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import '../styles/MessageInput.css';
 
 export default function MessageInput({ onSendMessage, disabled }) {
   const [input, setInput] = useState('');
+  const textareaRef = useRef(null);
+
+  useEffect(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(ta.scrollHeight, 140) + 'px';
+  }, [input]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
     if (input.trim()) {
       onSendMessage(input.trim());
       setInput('');
+      if (textareaRef.current) textareaRef.current.style.height = 'auto';
     }
   };
 
@@ -19,10 +28,13 @@ export default function MessageInput({ onSendMessage, disabled }) {
     }
   };
 
+  const canSend = !disabled && !!input.trim();
+
   return (
     <form className="message-input-form" onSubmit={handleSubmit}>
       <div className="input-wrapper">
         <textarea
+          ref={textareaRef}
           className="message-input"
           value={input}
           onChange={e => setInput(e.target.value)}
@@ -33,13 +45,13 @@ export default function MessageInput({ onSendMessage, disabled }) {
         />
         <button
           type="submit"
-          className="send-button"
-          disabled={disabled || !input.trim()}
+          className={`send-button ${canSend ? 'send-button--active' : ''}`}
+          disabled={!canSend}
           title="Send"
         >
-          <svg className="send-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="22" y1="2" x2="11" y2="13" />
-            <polygon points="22 2 15 22 11 13 2 9 22 2" />
+          <svg className="send-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M22 2L11 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M22 2L15 22L11 13L2 9L22 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="currentColor" fillOpacity="0.15"/>
           </svg>
         </button>
       </div>

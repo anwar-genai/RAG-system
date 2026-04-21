@@ -10,10 +10,9 @@ function App() {
   const [view, setView] = useState('chat'); // 'chat' | 'admin'
   const [currentUser, setCurrentUser] = useState(authService.getUser());
 
-  // If already logged in on mount but profile not cached (e.g. tokens survived a page refresh
-  // before Phase A was deployed), fetch the profile now so role is available immediately.
+  // Always re-fetch profile on mount so stale localStorage role data gets corrected.
   useEffect(() => {
-    if (loggedIn && !authService.getUser()) {
+    if (loggedIn) {
       authService._fetchAndCacheMe().then(user => {
         if (user) setCurrentUser(user);
       });

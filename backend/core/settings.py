@@ -108,6 +108,10 @@ AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
 
+# Allow files up to 50 MB for knowledge base uploads
+DATA_UPLOAD_MAX_MEMORY_SIZE = 52_428_800
+FILE_UPLOAD_MAX_MEMORY_SIZE = 52_428_800
+
 LANGUAGE_CODE = 'en-us'
 TIME_ZONE = 'UTC'
 USE_I18N = True

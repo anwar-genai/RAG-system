@@ -229,7 +229,7 @@ def create_session(request):
 # ---------------------------------------------------------------------------
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAuthenticated, IsAdminRole])
 @throttle_classes([UploadRateThrottle])
 def upload_documents(request):
     uploaded_files = request.FILES.getlist("files") or ([request.FILES["file"]] if "file" in request.FILES else [])
