@@ -10,6 +10,16 @@ function App() {
   const [view, setView] = useState('chat'); // 'chat' | 'admin'
   const [currentUser, setCurrentUser] = useState(authService.getUser());
 
+  // If already logged in on mount but profile not cached (e.g. tokens survived a page refresh
+  // before Phase A was deployed), fetch the profile now so role is available immediately.
+  useEffect(() => {
+    if (loggedIn && !authService.getUser()) {
+      authService._fetchAndCacheMe().then(user => {
+        if (user) setCurrentUser(user);
+      });
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     const handleStorage = () => {
       setLoggedIn(authService.isLoggedIn());

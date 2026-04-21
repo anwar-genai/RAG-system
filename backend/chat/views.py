@@ -61,11 +61,18 @@ def register_user(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def me(request):
-    """Return the current user's id, username, and role."""
+    """Return the current user's id, username, and role.
+    Creates a UserProfile on first call for users who existed before Phase A."""
+    from .models import UserProfile
+    no_profiles_yet = not UserProfile.objects.exists()
+    profile, _ = UserProfile.objects.get_or_create(
+        user=request.user,
+        defaults={"role": "admin" if no_profiles_yet else "user"},
+    )
     return Response({
         "id": request.user.id,
         "username": request.user.username,
-        "role": _user_role(request.user),
+        "role": profile.role,
         "date_joined": request.user.date_joined,
     })
 
