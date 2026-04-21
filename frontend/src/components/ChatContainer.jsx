@@ -56,29 +56,26 @@ export default function ChatContainer({ onLogout, onAdmin, currentUser }) {
 
   const initializeSession = async () => {
     const saved = localStorage.getItem('chat_session_id');
-    if (saved) {
+    if (!saved) return; // No session yet — backend will create one on the first message.
+    try {
+      const session = await chatService.getSession(saved);
       setSessionId(saved);
-      try {
-        const session = await chatService.getSession(saved);
-        setMessages(session.messages.map(m => ({
-          type: m.message_type, content: m.content, sources: m.sources || [], id: m.id,
-        })));
-        return;
-      } catch { /* fall through to create new */ }
+      setMessages(session.messages.map(m => ({
+        type: m.message_type, content: m.content, sources: m.sources || [], id: m.id,
+      })));
+    } catch {
+      // Saved id is stale (e.g. different user logged in on this browser) — drop it.
+      localStorage.removeItem('chat_session_id');
+      setSessionId(null);
+      setMessages([]);
     }
-    createNewSession();
   };
 
-  const createNewSession = async () => {
-    try {
-      const res = await chatService.createSession();
-      setSessionId(res.session_id);
-      localStorage.setItem('chat_session_id', res.session_id);
-      setMessages([]);
-      await loadSessions();
-    } catch {
-      setError('Failed to create session.');
-    }
+  // "+ New Chat" — reset local state only. The backend session is created on first message.
+  const createNewSession = () => {
+    setSessionId(null);
+    setMessages([]);
+    localStorage.removeItem('chat_session_id');
   };
 
   const switchSession = async (sid) => {
@@ -96,7 +93,7 @@ export default function ChatContainer({ onLogout, onAdmin, currentUser }) {
   };
 
   const handleSendMessage = async (userMessage) => {
-    if (!userMessage.trim() || !sessionId) return;
+    if (!userMessage.trim()) return;
     setError(null);
     setLoading(true);
 
@@ -120,6 +117,11 @@ export default function ChatContainer({ onLogout, onAdmin, currentUser }) {
           });
         },
         onDone: (data) => {
+          // Capture the session id the backend created (or re-used) on first turn.
+          if (data.session_id && data.session_id !== sessionId) {
+            setSessionId(data.session_id);
+            localStorage.setItem('chat_session_id', data.session_id);
+          }
           setMessages(prev => {
             const next = [...prev];
             next[next.length - 1] = {
@@ -374,7 +376,7 @@ export default function ChatContainer({ onLogout, onAdmin, currentUser }) {
         </div>
 
         {/* Input */}
-        <MessageInput onSendMessage={handleSendMessage} disabled={loading || !sessionId} />
+        <MessageInput onSendMessage={handleSendMessage} disabled={loading} />
       </main>
     </div>
   );

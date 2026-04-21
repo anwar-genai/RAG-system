@@ -1,6 +1,7 @@
 import csv
 import hashlib
 import json
+import os
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
@@ -12,19 +13,30 @@ from PyPDF2 import PdfReader
 from typing import List, Dict, Tuple, Any
 from pathlib import Path
 
+def _openai_kwargs() -> dict:
+    """Return extra kwargs for OpenAI clients (e.g. proxy support via OPENAI_PROXY env var)."""
+    proxy = os.environ.get("OPENAI_PROXY", "").strip()
+    if proxy:
+        import httpx
+        return {"http_client": httpx.Client(proxy=proxy), "http_async_client": httpx.AsyncClient(proxy=proxy)}
+    return {}
+
 class RAGSystem:
     """RAG (Retrieval-Augmented Generation) system for chat"""
 
     def __init__(self):
-        self.embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+        kwargs = _openai_kwargs()
+        self.embeddings = OpenAIEmbeddings(model="text-embedding-3-small", **kwargs)
         self.llm = ChatOpenAI(
             model="gpt-4o-mini",
-            temperature=0.0  # important for RAG
+            temperature=0.0,
+            **kwargs
         )
         self.llm_streaming = ChatOpenAI(
             model="gpt-4o-mini",
             temperature=0.0,
             streaming=True,
+            **kwargs
         )
         self.kb_path = Path(__file__).parent.parent / "knowledge_base"
         self.vector_store_dir = Path(__file__).parent.parent / "vector_store"
@@ -287,8 +299,9 @@ Answer clearly and concisely.
             return answer, sources
 
         except Exception as e:
-            print("RAG error:", e)
-            return "Sorry, something went wrong.", []
+            import traceback
+            traceback.print_exc()
+            return f"Error: {e}", []
 
     def chat_stream(
         self,
@@ -353,8 +366,9 @@ Answer clearly and concisely.
             yield ("done", sources)
 
         except Exception as e:
-            print("RAG stream error:", e)
-            yield ("chunk", "Sorry, something went wrong.")
+            import traceback
+            traceback.print_exc()
+            yield ("chunk", f"Error: {e}")
             yield ("done", [])
 
     # -------------------------

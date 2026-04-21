@@ -50,11 +50,8 @@ def register_user(request):
     if User.objects.filter(username=username).exists():
         return Response({"error": "Username is already taken."}, status=status.HTTP_400_BAD_REQUEST)
 
-    user = User.objects.create_user(username=username, password=password)
-    # First user ever becomes admin; all others are regular users
-    from .models import UserProfile
-    role = 'admin' if not UserProfile.objects.filter(role='admin').exists() else 'user'
-    UserProfile.objects.get_or_create(user=user, defaults={'role': role})
+    # Profile (and admin-promotion for first user) is created by the post_save signal in signals.py.
+    User.objects.create_user(username=username, password=password)
     return Response({"message": "Account created. You can now sign in."}, status=status.HTTP_201_CREATED)
 
 
@@ -62,13 +59,21 @@ def register_user(request):
 @permission_classes([IsAuthenticated])
 def me(request):
     """Return the current user's id, username, and role.
-    Creates a UserProfile on first call for users who existed before Phase A."""
+    Self-heals two pre-existing-user cases:
+      1. No UserProfile yet → create one.
+      2. No admin exists system-wide → promote the caller (first-user-wins rule)."""
     from .models import UserProfile
-    no_profiles_yet = not UserProfile.objects.exists()
+
     profile, _ = UserProfile.objects.get_or_create(
         user=request.user,
-        defaults={"role": "admin" if no_profiles_yet else "user"},
+        defaults={"role": "user"},
     )
+
+    # If the system has zero admins, promote the caller so the app is always administrable.
+    if not UserProfile.objects.filter(role="admin").exists():
+        profile.role = "admin"
+        profile.save(update_fields=["role"])
+
     return Response({
         "id": request.user.id,
         "username": request.user.username,
@@ -105,7 +110,7 @@ def chat_endpoint(request):
 
     chat_history = [
         {'type': m['message_type'], 'content': m['content']}
-        for m in session.messages.exclude(id=user_msg_obj.id).values('message_type', 'content').order_by('-created_at')
+        for m in session.messages.exclude(id=user_msg_obj.id).values('message_type', 'content').order_by('created_at')
     ]
 
     rag_system = get_rag_system()
@@ -126,7 +131,7 @@ def chat_endpoint(request):
 def _stream_chat_generator(session, user_message, user_msg_obj):
     chat_history = [
         {"type": m["message_type"], "content": m["content"]}
-        for m in session.messages.exclude(id=user_msg_obj.id).values("message_type", "content").order_by("-created_at")
+        for m in session.messages.exclude(id=user_msg_obj.id).values("message_type", "content").order_by("created_at")
     ]
 
     rag_system = get_rag_system()
@@ -146,7 +151,7 @@ def _stream_chat_generator(session, user_message, user_msg_obj):
                     session=session, message_type="assistant",
                     content="".join(full_answer), sources=value,
                 )
-                yield f"data: {json.dumps({'t': 'done', 'sources': value, 'message_id': ai_msg_obj.id})}\n\n"
+                yield f"data: {json.dumps({'t': 'done', 'sources': value, 'message_id': ai_msg_obj.id, 'session_id': str(session.session_id)})}\n\n"
     except Exception as e:
         yield f"data: {json.dumps({'t': 'error', 'error': str(e)})}\n\n"
     finally:
@@ -198,15 +203,23 @@ def get_session(request, session_id):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def list_sessions(request):
-    """List all sessions for the current user, newest first, with a preview title."""
-    sessions = ChatSession.objects.filter(user=request.user).annotate(
-        message_count=Count('messages')
-    ).order_by('-updated_at')
+    """List all non-empty sessions for the current user, newest first.
+    Empty sessions (user opened a new chat but never sent a message) are hidden —
+    they'd otherwise pile up as identical 'New conversation' entries in the sidebar."""
+    sessions = (
+        ChatSession.objects.filter(user=request.user)
+        .annotate(message_count=Count('messages'))
+        .filter(message_count__gt=0)
+        .order_by('-updated_at')
+    )
 
     data = []
     for s in sessions:
         first_msg = s.messages.filter(message_type='user').order_by('created_at').first()
-        title = (first_msg.content[:60] + '…') if first_msg and len(first_msg.content) > 60 else (first_msg.content if first_msg else 'New conversation')
+        if first_msg:
+            title = first_msg.content[:60] + ('…' if len(first_msg.content) > 60 else '')
+        else:
+            title = 'New conversation'
         data.append({
             "session_id": str(s.session_id),
             "title": title,
@@ -410,16 +423,21 @@ def admin_documents(_request):
 def admin_document_delete(request, doc_name):
     """Delete a document from the knowledge base and rebuild the index."""
     kb_path = Path(__file__).parent.parent / "knowledge_base"
+
+    # Reject any path separators / traversal segments up front — only a bare filename is allowed.
+    if doc_name != Path(doc_name).name or doc_name in ("", ".", ".."):
+        return Response({"error": "Invalid document name."}, status=status.HTTP_400_BAD_REQUEST)
+
     target = kb_path / doc_name
 
-    if not target.exists() or not target.is_file():
-        return Response({"error": "Document not found."}, status=status.HTTP_404_NOT_FOUND)
-
-    # Security: prevent path traversal
+    # Defense in depth: ensure resolved target stays inside kb_path.
     try:
         target.resolve().relative_to(kb_path.resolve())
     except ValueError:
         return Response({"error": "Invalid document name."}, status=status.HTTP_400_BAD_REQUEST)
+
+    if not target.exists() or not target.is_file():
+        return Response({"error": "Document not found."}, status=status.HTTP_404_NOT_FOUND)
 
     target.unlink()
     KnowledgeDocument.objects.filter(name=doc_name).delete()

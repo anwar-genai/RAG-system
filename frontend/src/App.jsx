@@ -42,7 +42,7 @@ function App() {
 
   if (!loggedIn) return <LoginForm onLogin={handleLogin} />;
 
-  if (view === 'admin') {
+  if (view === 'admin' && currentUser?.role === 'admin') {
     return <AdminPanel currentUser={currentUser} onClose={() => setView('chat')} />;
   }
 

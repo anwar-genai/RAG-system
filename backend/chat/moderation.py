@@ -4,9 +4,25 @@ from openai import OpenAI
 
 logger = logging.getLogger(__name__)
 
-_client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
-
 _FLAGGED_CATEGORIES = {'hate', 'harassment', 'self-harm', 'sexual/minors', 'violence'}
+
+_client = None
+
+
+def _get_client() -> OpenAI:
+    """Lazily build the OpenAI client so OPENAI_PROXY and env-loaded API keys are picked up."""
+    global _client
+    if _client is not None:
+        return _client
+
+    kwargs = {'api_key': os.environ.get('OPENAI_API_KEY')}
+    proxy = os.environ.get('OPENAI_PROXY', '').strip()
+    if proxy:
+        import httpx
+        kwargs['http_client'] = httpx.Client(proxy=proxy)
+
+    _client = OpenAI(**kwargs)
+    return _client
 
 
 def is_content_safe(text: str) -> tuple[bool, str]:
@@ -17,7 +33,7 @@ def is_content_safe(text: str) -> tuple[bool, str]:
     so a service outage never blocks legitimate users.
     """
     try:
-        response = _client.moderations.create(input=text)
+        response = _get_client().moderations.create(input=text)
         result = response.results[0]
         if result.flagged:
             triggered = [

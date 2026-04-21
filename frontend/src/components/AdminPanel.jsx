@@ -28,7 +28,8 @@ function StatCard({ label, value, sub, color }) {
 
 // ─── Overview Tab ────────────────────────────────────────────────────────────
 
-function OverviewTab({ stats }) {
+function OverviewTab({ stats, error }) {
+  if (error) return <div style={s.errorBanner}>{error}</div>;
   if (!stats) return <div style={s.loading}>Loading stats…</div>;
   return (
     <div>
@@ -244,10 +245,38 @@ function DocumentsTab() {
 export default function AdminPanel({ currentUser, onClose }) {
   const [tab, setTab] = useState('overview');
   const [stats, setStats] = useState(null);
+  const [statsError, setStatsError] = useState('');
+
+  const isAdmin = currentUser?.role === 'admin';
 
   useEffect(() => {
-    adminService.getStats().then(setStats).catch(() => {});
-  }, []);
+    if (!isAdmin) return;
+    adminService.getStats()
+      .then((data) => { setStats(data); setStatsError(''); })
+      .catch((e) => {
+        if (e?.response?.status === 403) setStatsError("You don't have permission to view admin stats.");
+        else setStatsError(e?.response?.data?.error || 'Failed to load stats. Is the backend running?');
+      });
+  }, [isAdmin]);
+
+  if (!isAdmin) {
+    return (
+      <div style={s.page}>
+        <div style={s.header}>
+          <div>
+            <h1 style={s.headerTitle}>Admin Panel</h1>
+            <p style={s.headerSub}>Manage users, documents, and system settings</p>
+          </div>
+          <button style={s.backBtn} onClick={onClose}>← Back to Chat</button>
+        </div>
+        <div style={s.content}>
+          <div style={s.errorBanner}>
+            You don't have admin permissions. If you believe this is a mistake, please sign out and back in.
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const tabs = [
     { id: 'overview', label: 'Overview' },
@@ -281,7 +310,7 @@ export default function AdminPanel({ currentUser, onClose }) {
 
       {/* Content */}
       <div style={s.content}>
-        {tab === 'overview' && <OverviewTab stats={stats} />}
+        {tab === 'overview' && <OverviewTab stats={stats} error={statsError} />}
         {tab === 'users' && <UsersTab currentUserId={currentUser?.id} />}
         {tab === 'documents' && <DocumentsTab />}
       </div>

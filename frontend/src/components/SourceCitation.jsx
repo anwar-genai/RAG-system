@@ -12,12 +12,10 @@ export default function SourceCitation({ sources }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef(null);
 
-  if (!sources || sources.length === 0) {
-    return null;
-  }
-
-  // Close on outside click / Escape
+  // Close on outside click / Escape — hooks must run unconditionally.
   useEffect(() => {
+    if (!open) return undefined;
+
     function handleClickOutside(event) {
       if (containerRef.current && !containerRef.current.contains(event.target)) {
         setOpen(false);
@@ -30,16 +28,17 @@ export default function SourceCitation({ sources }) {
       }
     }
 
-    if (open) {
-      document.addEventListener('mousedown', handleClickOutside);
-      document.addEventListener('keydown', handleKeyDown);
-    }
-
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleKeyDown);
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, [open]);
+
+  if (!sources || sources.length === 0) {
+    return null;
+  }
 
   const count = sources.length;
 

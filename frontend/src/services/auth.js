@@ -31,6 +31,9 @@ export const authService = {
     localStorage.removeItem('access_token');
     localStorage.removeItem('refresh_token');
     localStorage.removeItem('user_profile');
+    // Prevent a different user signing in on this browser from inheriting the previous
+    // user's chat session id (which their account wouldn't own anyway, but breaks UX).
+    localStorage.removeItem('chat_session_id');
   },
 
   async _fetchAndCacheMe() {
