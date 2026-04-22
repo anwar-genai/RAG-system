@@ -13,6 +13,8 @@ from PyPDF2 import PdfReader
 from typing import List, Dict, Tuple, Any
 from pathlib import Path
 
+NO_ANSWER_FALLBACK = "I don't have information about this in the provided documents."
+
 def _openai_kwargs() -> dict:
     """Return extra kwargs for OpenAI clients (e.g. proxy support via OPENAI_PROXY env var)."""
     proxy = os.environ.get("OPENAI_PROXY", "").strip()
@@ -257,8 +259,8 @@ class RAGSystem:
             """
 You are a helpful AI assistant.
 Answer ONLY using the provided document context.
-If the answer is not present, say:
-"I don't have information about this in the provided documents."
+If the answer is not present, respond with EXACTLY this sentence and nothing else:
+I don't have information about this in the provided documents.
 
 Conversation history:
 {chat_history}
@@ -294,7 +296,7 @@ Answer clearly and concisely.
             answer = result["answer"]
             context_docs = result["context"]
 
-            sources = self._extract_sources(context_docs)
+            sources = [] if self._is_no_answer(answer) else self._extract_sources(context_docs)
 
             return answer, sources
 
@@ -321,8 +323,8 @@ Answer clearly and concisely.
             """
 You are a helpful AI assistant.
 Answer ONLY using the provided document context.
-If the answer is not present, say:
-"I don't have information about this in the provided documents."
+If the answer is not present, respond with EXACTLY this sentence and nothing else:
+I don't have information about this in the provided documents.
 
 Conversation history:
 {chat_history}
@@ -353,6 +355,7 @@ Answer clearly and concisely.
                 "context": documents,
             }
 
+            answer_parts = []
             for chunk in document_chain.stream(inputs):
                 if isinstance(chunk, dict) and "answer" in chunk:
                     part = chunk["answer"]
@@ -361,9 +364,12 @@ Answer clearly and concisely.
                 else:
                     part = str(chunk) if chunk else ""
                 if part:
+                    answer_parts.append(part)
                     yield ("chunk", part)
 
-            yield ("done", sources)
+            final_answer = "".join(answer_parts)
+            final_sources = [] if self._is_no_answer(final_answer) else sources
+            yield ("done", final_sources)
 
         except Exception as e:
             import traceback
@@ -374,6 +380,13 @@ Answer clearly and concisely.
     # -------------------------
     # Source citation
     # -------------------------
+    @staticmethod
+    def _is_no_answer(answer: str) -> bool:
+        if not answer:
+            return True
+        normalized = answer.strip().rstrip(".").strip().lower()
+        return normalized == NO_ANSWER_FALLBACK.strip().rstrip(".").strip().lower()
+
     def _extract_sources(
         self,
         docs: List[Document]
