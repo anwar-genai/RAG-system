@@ -7,7 +7,7 @@
 .input-wrapper {
   display: flex;
   gap: 10px;
-  align-items: flex-end;
+  align-items: center;
   max-width: 780px;
   margin: 0 auto;
   background: #f8fafc;
@@ -41,6 +41,7 @@
 .send-button {
   flex-shrink: 0;
   width: 36px; height: 36px;
+  padding: 0;
   border-radius: 9px;
   border: none;
   background: #e2e8f0;
@@ -49,6 +50,7 @@
   cursor: not-allowed;
   transition: all 0.15s;
 }
+.send-button:hover { border-color: transparent; }
 .send-button--active {
   background: linear-gradient(135deg, #4f46e5, #6366f1);
   color: #fff;
@@ -60,5 +62,6 @@
 }
 
 .send-icon {
-  width: 16px; height: 16px;
+  width: 18px; height: 18px;
+  display: block;
 }
