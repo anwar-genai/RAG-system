@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(venv/Scripts/python manage.py check)",
+      "Bash(venv/Scripts/python manage.py shell -c \"from django.db.models import Count; from chat.models import ChatSession; qs = ChatSession.objects.annotate\\(mc=Count\\('messages'\\)\\).filter\\(mc=0\\); n = qs.count\\(\\); qs.delete\\(\\); print\\(f'Deleted {n} empty sessions'\\)\")"
+    ]
+  }
+}
