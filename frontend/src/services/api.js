@@ -54,6 +54,11 @@ export const chatService = {
     return response.data;
   },
 
+  listSessions: async () => {
+    const response = await apiClient.get('sessions/');
+    return response.data;
+  },
+
   createSession: async () => {
     const response = await apiClient.post('session/');
     return response.data;
@@ -122,4 +127,5 @@ export const chatService = {
   },
 };
 
+export { apiClient };
 export default chatService;

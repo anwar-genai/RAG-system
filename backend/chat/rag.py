@@ -1,6 +1,7 @@
 import csv
 import hashlib
 import json
+import os
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
@@ -8,23 +9,65 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.documents import Document
 from langchain_classic.chains import create_retrieval_chain
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
+from openai import APIConnectionError, APITimeoutError
 from PyPDF2 import PdfReader
 from typing import List, Dict, Tuple, Any
 from pathlib import Path
+
+NO_ANSWER_FALLBACK = "I don't have information about this in the provided documents."
+UPSTREAM_ERROR_MSG = "Couldn't reach the AI provider. Check your network or VPN and try again."
+GENERIC_ERROR_MSG = "Something went wrong generating a response. Please try again."
+
+
+class UpstreamUnavailable(Exception):
+    """Raised when the LLM/embedding provider is unreachable (network / proxy)."""
+
+def _openai_kwargs() -> dict:
+    """Return extra kwargs for OpenAI clients (e.g. proxy support via OPENAI_PROXY env var).
+
+    Sets a connect timeout so a blocked api.openai.com fails fast (~5s) instead of
+    holding each request for the full OS TCP retry window (~60s)."""
+    import httpx
+    timeout = httpx.Timeout(connect=5.0, read=60.0, write=10.0, pool=5.0)
+    proxy = os.environ.get("OPENAI_PROXY", "").strip()
+    if proxy:
+        return {
+            "http_client": httpx.Client(proxy=proxy, timeout=timeout),
+            "http_async_client": httpx.AsyncClient(proxy=proxy, timeout=timeout),
+        }
+    return {
+        "http_client": httpx.Client(timeout=timeout),
+        "http_async_client": httpx.AsyncClient(timeout=timeout),
+    }
 
 class RAGSystem:
     """RAG (Retrieval-Augmented Generation) system for chat"""
 
     def __init__(self):
-        self.embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+        kwargs = _openai_kwargs()
+        # max_retries=0 + explicit timeout so a blocked upstream errors out in
+        # ~5-10s instead of the SDK's default 3-attempt × OS-TCP-retry chain
+        # (which can be 60-180s on Windows).
+        self.embeddings = OpenAIEmbeddings(
+            model="text-embedding-3-small",
+            max_retries=0,
+            timeout=10.0,
+            **kwargs,
+        )
         self.llm = ChatOpenAI(
             model="gpt-4o-mini",
-            temperature=0.0  # important for RAG
+            temperature=0.0,
+            max_retries=0,
+            timeout=30.0,
+            **kwargs,
         )
         self.llm_streaming = ChatOpenAI(
             model="gpt-4o-mini",
             temperature=0.0,
             streaming=True,
+            max_retries=0,
+            timeout=30.0,
+            **kwargs,
         )
         self.kb_path = Path(__file__).parent.parent / "knowledge_base"
         self.vector_store_dir = Path(__file__).parent.parent / "vector_store"
@@ -245,8 +288,8 @@ class RAGSystem:
             """
 You are a helpful AI assistant.
 Answer ONLY using the provided document context.
-If the answer is not present, say:
-"I don't have information about this in the provided documents."
+If the answer is not present, respond with EXACTLY this sentence and nothing else:
+I don't have information about this in the provided documents.
 
 Conversation history:
 {chat_history}
@@ -282,13 +325,14 @@ Answer clearly and concisely.
             answer = result["answer"]
             context_docs = result["context"]
 
-            sources = self._extract_sources(context_docs)
+            sources = [] if self._is_no_answer(answer) else self._extract_sources(context_docs)
 
             return answer, sources
 
-        except Exception as e:
-            print("RAG error:", e)
-            return "Sorry, something went wrong.", []
+        except (APITimeoutError, APIConnectionError) as e:
+            import traceback
+            traceback.print_exc()
+            raise UpstreamUnavailable(UPSTREAM_ERROR_MSG) from e
 
     def chat_stream(
         self,
@@ -308,8 +352,8 @@ Answer clearly and concisely.
             """
 You are a helpful AI assistant.
 Answer ONLY using the provided document context.
-If the answer is not present, say:
-"I don't have information about this in the provided documents."
+If the answer is not present, respond with EXACTLY this sentence and nothing else:
+I don't have information about this in the provided documents.
 
 Conversation history:
 {chat_history}
@@ -340,6 +384,7 @@ Answer clearly and concisely.
                 "context": documents,
             }
 
+            answer_parts = []
             for chunk in document_chain.stream(inputs):
                 if isinstance(chunk, dict) and "answer" in chunk:
                     part = chunk["answer"]
@@ -348,18 +393,32 @@ Answer clearly and concisely.
                 else:
                     part = str(chunk) if chunk else ""
                 if part:
+                    answer_parts.append(part)
                     yield ("chunk", part)
 
-            yield ("done", sources)
+            final_answer = "".join(answer_parts)
+            final_sources = [] if self._is_no_answer(final_answer) else sources
+            yield ("done", final_sources)
 
-        except Exception as e:
-            print("RAG stream error:", e)
-            yield ("chunk", "Sorry, something went wrong.")
-            yield ("done", [])
+        except (APITimeoutError, APIConnectionError):
+            import traceback
+            traceback.print_exc()
+            yield ("error", UPSTREAM_ERROR_MSG)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            yield ("error", GENERIC_ERROR_MSG)
 
     # -------------------------
     # Source citation
     # -------------------------
+    @staticmethod
+    def _is_no_answer(answer: str) -> bool:
+        if not answer:
+            return True
+        normalized = answer.strip().rstrip(".").strip().lower()
+        return normalized == NO_ANSWER_FALLBACK.strip().rstrip(".").strip().lower()
+
     def _extract_sources(
         self,
         docs: List[Document]
