@@ -135,8 +135,17 @@ export default function ChatContainer({ onLogout, onAdmin, currentUser }) {
         },
       });
     } catch (err) {
-      setError('Failed to send message. Please try again.');
-      setMessages(prev => prev.slice(0, -2));
+      // Drop the empty assistant placeholder but keep the user's message so
+      // they can see what they sent and retry. Use the backend's error text
+      // when available (it's already user-friendly).
+      setError(err?.message || 'Failed to send message. Please try again.');
+      setMessages(prev => {
+        const last = prev[prev.length - 1];
+        if (last && last.type === 'assistant' && last.content === '') {
+          return prev.slice(0, -1);
+        }
+        return prev;
+      });
     } finally {
       setLoading(false);
     }

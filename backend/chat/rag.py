@@ -9,11 +9,18 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.documents import Document
 from langchain_classic.chains import create_retrieval_chain
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
+from openai import APIConnectionError, APITimeoutError
 from PyPDF2 import PdfReader
 from typing import List, Dict, Tuple, Any
 from pathlib import Path
 
 NO_ANSWER_FALLBACK = "I don't have information about this in the provided documents."
+UPSTREAM_ERROR_MSG = "Couldn't reach the AI provider. Check your network or VPN and try again."
+GENERIC_ERROR_MSG = "Something went wrong generating a response. Please try again."
+
+
+class UpstreamUnavailable(Exception):
+    """Raised when the LLM/embedding provider is unreachable (network / proxy)."""
 
 def _openai_kwargs() -> dict:
     """Return extra kwargs for OpenAI clients (e.g. proxy support via OPENAI_PROXY env var)."""
@@ -300,10 +307,10 @@ Answer clearly and concisely.
 
             return answer, sources
 
-        except Exception as e:
+        except (APITimeoutError, APIConnectionError) as e:
             import traceback
             traceback.print_exc()
-            return f"Error: {e}", []
+            raise UpstreamUnavailable(UPSTREAM_ERROR_MSG) from e
 
     def chat_stream(
         self,
@@ -371,11 +378,14 @@ Answer clearly and concisely.
             final_sources = [] if self._is_no_answer(final_answer) else sources
             yield ("done", final_sources)
 
-        except Exception as e:
+        except (APITimeoutError, APIConnectionError):
             import traceback
             traceback.print_exc()
-            yield ("chunk", f"Error: {e}")
-            yield ("done", [])
+            yield ("error", UPSTREAM_ERROR_MSG)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            yield ("error", GENERIC_ERROR_MSG)
 
     # -------------------------
     # Source citation

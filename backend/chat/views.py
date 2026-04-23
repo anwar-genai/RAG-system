@@ -11,7 +11,7 @@ from rest_framework import status
 
 from .models import ChatSession, Message, KnowledgeDocument
 from .serializers import ChatRequestSerializer, ChatSessionSerializer
-from .rag import get_rag_system, reload_rag_system
+from .rag import get_rag_system, reload_rag_system, UpstreamUnavailable, GENERIC_ERROR_MSG
 from .sanitizers import sanitize_message
 from .moderation import is_content_safe
 from .throttles import ChatRateThrottle, UploadRateThrottle
@@ -116,8 +116,10 @@ def chat_endpoint(request):
     rag_system = get_rag_system()
     try:
         answer, sources = rag_system.chat(user_message, chat_history)
-    except Exception as e:
-        return Response({"error": f"Error generating response: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    except UpstreamUnavailable as e:
+        return Response({"error": str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+    except Exception:
+        return Response({"error": GENERIC_ERROR_MSG}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     ai_msg_obj = Message.objects.create(session=session, message_type='assistant', content=answer, sources=sources)
     return Response({
@@ -137,6 +139,7 @@ def _stream_chat_generator(session, user_message, user_msg_obj):
     rag_system = get_rag_system()
     full_answer = []
     ai_msg_obj = None
+    errored = False
 
     try:
         for event in rag_system.chat_stream(user_message, chat_history):
@@ -152,10 +155,16 @@ def _stream_chat_generator(session, user_message, user_msg_obj):
                     content="".join(full_answer), sources=value,
                 )
                 yield f"data: {json.dumps({'t': 'done', 'sources': value, 'message_id': ai_msg_obj.id, 'session_id': str(session.session_id)})}\n\n"
-    except Exception as e:
-        yield f"data: {json.dumps({'t': 'error', 'error': str(e)})}\n\n"
+            elif kind == "error":
+                errored = True
+                yield f"data: {json.dumps({'t': 'error', 'error': value})}\n\n"
+    except Exception:
+        errored = True
+        yield f"data: {json.dumps({'t': 'error', 'error': GENERIC_ERROR_MSG})}\n\n"
     finally:
-        if full_answer and ai_msg_obj is None:
+        # Only persist a partial assistant message if we actually got some content
+        # AND we didn't error out. On error, don't save a half-baked reply.
+        if full_answer and ai_msg_obj is None and not errored:
             Message.objects.create(session=session, message_type="assistant", content="".join(full_answer), sources=[])
 
 
