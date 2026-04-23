@@ -23,29 +23,51 @@ class UpstreamUnavailable(Exception):
     """Raised when the LLM/embedding provider is unreachable (network / proxy)."""
 
 def _openai_kwargs() -> dict:
-    """Return extra kwargs for OpenAI clients (e.g. proxy support via OPENAI_PROXY env var)."""
+    """Return extra kwargs for OpenAI clients (e.g. proxy support via OPENAI_PROXY env var).
+
+    Sets a connect timeout so a blocked api.openai.com fails fast (~5s) instead of
+    holding each request for the full OS TCP retry window (~60s)."""
+    import httpx
+    timeout = httpx.Timeout(connect=5.0, read=60.0, write=10.0, pool=5.0)
     proxy = os.environ.get("OPENAI_PROXY", "").strip()
     if proxy:
-        import httpx
-        return {"http_client": httpx.Client(proxy=proxy), "http_async_client": httpx.AsyncClient(proxy=proxy)}
-    return {}
+        return {
+            "http_client": httpx.Client(proxy=proxy, timeout=timeout),
+            "http_async_client": httpx.AsyncClient(proxy=proxy, timeout=timeout),
+        }
+    return {
+        "http_client": httpx.Client(timeout=timeout),
+        "http_async_client": httpx.AsyncClient(timeout=timeout),
+    }
 
 class RAGSystem:
     """RAG (Retrieval-Augmented Generation) system for chat"""
 
     def __init__(self):
         kwargs = _openai_kwargs()
-        self.embeddings = OpenAIEmbeddings(model="text-embedding-3-small", **kwargs)
+        # max_retries=0 + explicit timeout so a blocked upstream errors out in
+        # ~5-10s instead of the SDK's default 3-attempt × OS-TCP-retry chain
+        # (which can be 60-180s on Windows).
+        self.embeddings = OpenAIEmbeddings(
+            model="text-embedding-3-small",
+            max_retries=0,
+            timeout=10.0,
+            **kwargs,
+        )
         self.llm = ChatOpenAI(
             model="gpt-4o-mini",
             temperature=0.0,
-            **kwargs
+            max_retries=0,
+            timeout=30.0,
+            **kwargs,
         )
         self.llm_streaming = ChatOpenAI(
             model="gpt-4o-mini",
             temperature=0.0,
             streaming=True,
-            **kwargs
+            max_retries=0,
+            timeout=30.0,
+            **kwargs,
         )
         self.kb_path = Path(__file__).parent.parent / "knowledge_base"
         self.vector_store_dir = Path(__file__).parent.parent / "vector_store"
