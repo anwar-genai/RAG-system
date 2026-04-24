@@ -22,6 +22,9 @@ urlpatterns = [
     path('api/session/', views.create_session, name='create_session'),
     path('api/session/<uuid:session_id>/', views.get_session, name='get_session'),
 
+    # Message feedback
+    path('api/messages/<int:message_id>/feedback/', views.message_feedback, name='message_feedback'),
+
     # Documents
     path('api/documents/upload/', views.upload_documents, name='upload_documents'),
 

@@ -73,6 +73,11 @@ export const chatService = {
     return response.data;
   },
 
+  setFeedback: async (messageId, vote /* 'up' | 'down' | 'clear' */) => {
+    const response = await apiClient.patch(`messages/${messageId}/feedback/`, { vote });
+    return response.data;
+  },
+
   sendMessageStream: async (userMessage, sessionId, { onChunk, onDone }) => {
     const res = await fetch(`${API_BASE_URL}/chat/stream/`, {
       method: 'POST',

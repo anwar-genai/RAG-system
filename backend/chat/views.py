@@ -114,14 +114,21 @@ def chat_endpoint(request):
     ]
 
     rag_system = get_rag_system()
+    rid = getattr(request, 'id', '')
     try:
-        answer, sources = rag_system.chat(user_message, chat_history)
+        answer, sources, usage = rag_system.chat(user_message, chat_history)
     except UpstreamUnavailable as e:
         return Response({"error": str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
     except Exception:
         return Response({"error": GENERIC_ERROR_MSG}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-    ai_msg_obj = Message.objects.create(session=session, message_type='assistant', content=answer, sources=sources)
+    ai_msg_obj = Message.objects.create(
+        session=session, message_type='assistant', content=answer, sources=sources,
+        request_id=rid,
+        tokens_in=usage.get('tokens_in'),
+        tokens_out=usage.get('tokens_out'),
+        cost_usd=usage.get('cost_usd'),
+    )
     return Response({
         'answer': answer,
         'sources': sources,
@@ -130,7 +137,7 @@ def chat_endpoint(request):
     })
 
 
-def _stream_chat_generator(session, user_message, user_msg_obj):
+def _stream_chat_generator(session, user_message, user_msg_obj, request_id=''):
     chat_history = [
         {"type": m["message_type"], "content": m["content"]}
         for m in session.messages.exclude(id=user_msg_obj.id).values("message_type", "content").order_by("created_at")
@@ -138,6 +145,7 @@ def _stream_chat_generator(session, user_message, user_msg_obj):
 
     rag_system = get_rag_system()
     full_answer = []
+    usage: dict = {}
     ai_msg_obj = None
     errored = False
 
@@ -149,10 +157,16 @@ def _stream_chat_generator(session, user_message, user_msg_obj):
             if kind == "chunk":
                 full_answer.append(value)
                 yield f"data: {json.dumps({'t': 'chunk', 'content': value})}\n\n"
+            elif kind == "usage":
+                usage = value or {}
             elif kind == "done":
                 ai_msg_obj = Message.objects.create(
                     session=session, message_type="assistant",
                     content="".join(full_answer), sources=value,
+                    request_id=request_id,
+                    tokens_in=usage.get('tokens_in'),
+                    tokens_out=usage.get('tokens_out'),
+                    cost_usd=usage.get('cost_usd'),
                 )
                 yield f"data: {json.dumps({'t': 'done', 'sources': value, 'message_id': ai_msg_obj.id, 'session_id': str(session.session_id)})}\n\n"
             elif kind == "error":
@@ -165,7 +179,13 @@ def _stream_chat_generator(session, user_message, user_msg_obj):
         # Only persist a partial assistant message if we actually got some content
         # AND we didn't error out. On error, don't save a half-baked reply.
         if full_answer and ai_msg_obj is None and not errored:
-            Message.objects.create(session=session, message_type="assistant", content="".join(full_answer), sources=[])
+            Message.objects.create(
+                session=session, message_type="assistant", content="".join(full_answer), sources=[],
+                request_id=request_id,
+                tokens_in=usage.get('tokens_in'),
+                tokens_out=usage.get('tokens_out'),
+                cost_usd=usage.get('cost_usd'),
+            )
 
 
 @api_view(["POST"])
@@ -188,15 +208,38 @@ def chat_stream_endpoint(request):
         return Response({"error": "Message not allowed."}, status=status.HTTP_400_BAD_REQUEST)
 
     session = _get_or_create_session(session_id, request.user)
-    user_msg_obj = Message.objects.create(session=session, message_type="user", content=user_message)
+    rid = getattr(request, 'id', '')
+    user_msg_obj = Message.objects.create(
+        session=session, message_type="user", content=user_message, request_id=rid,
+    )
 
     response = StreamingHttpResponse(
-        _stream_chat_generator(session, user_message, user_msg_obj),
+        _stream_chat_generator(session, user_message, user_msg_obj, request_id=rid),
         content_type="text/event-stream",
     )
     response["Cache-Control"] = "no-cache"
     response["X-Accel-Buffering"] = "no"
+    response["X-Request-ID"] = rid
     return response
+
+
+@api_view(["PATCH"])
+@permission_classes([IsAuthenticated])
+def message_feedback(request, message_id):
+    """Set thumbs-up/down on an assistant message owned by the caller."""
+    mapping = {"up": 1, "down": -1, "clear": 0, None: 0}
+    vote = request.data.get("vote")
+    if vote not in mapping:
+        return Response({"error": "vote must be 'up', 'down', or 'clear'"}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        msg = Message.objects.get(
+            pk=message_id, session__user=request.user, message_type='assistant',
+        )
+    except Message.DoesNotExist:
+        return Response({"error": "Message not found"}, status=status.HTTP_404_NOT_FOUND)
+    msg.feedback = mapping[vote]
+    msg.save(update_fields=['feedback'])
+    return Response({"id": msg.id, "feedback": msg.feedback})
 
 
 @api_view(['GET'])

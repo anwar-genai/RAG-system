@@ -49,12 +49,22 @@ class ChatSession(models.Model):
 
 class Message(models.Model):
     MESSAGE_TYPES = [('user', 'User'), ('assistant', 'Assistant')]
+    FEEDBACK_CHOICES = [(-1, 'Down'), (0, 'None'), (1, 'Up')]
 
     session = models.ForeignKey(ChatSession, on_delete=models.CASCADE, related_name='messages')
     message_type = models.CharField(max_length=10, choices=MESSAGE_TYPES)
     content = models.TextField()
     sources = models.JSONField(null=True, blank=True, default=list)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    # Observability — populated for assistant messages by the RAG path.
+    request_id = models.CharField(max_length=32, blank=True, default='')
+    tokens_in = models.PositiveIntegerField(null=True, blank=True)
+    tokens_out = models.PositiveIntegerField(null=True, blank=True)
+    cost_usd = models.FloatField(null=True, blank=True)
+
+    # User feedback on assistant replies. 0 = no vote.
+    feedback = models.SmallIntegerField(choices=FEEDBACK_CHOICES, default=0)
 
     class Meta:
         ordering = ['created_at']

@@ -62,6 +62,7 @@ export default function ChatContainer({ onLogout, onAdmin, currentUser }) {
       setSessionId(saved);
       setMessages(session.messages.map(m => ({
         type: m.message_type, content: m.content, sources: m.sources || [], id: m.id,
+        feedback: m.feedback || 0,
       })));
     } catch {
       // Saved id is stale (e.g. different user logged in on this browser) — drop it.
@@ -85,6 +86,7 @@ export default function ChatContainer({ onLogout, onAdmin, currentUser }) {
       localStorage.setItem('chat_session_id', sid);
       setMessages(session.messages.map(m => ({
         type: m.message_type, content: m.content, sources: m.sources || [], id: m.id,
+        feedback: m.feedback || 0,
       })));
       setError(null);
     } catch {
@@ -101,8 +103,8 @@ export default function ChatContainer({ onLogout, onAdmin, currentUser }) {
     // shows until the first chunk arrives and fills the placeholder.
     setMessages(prev => [
       ...prev,
-      { type: 'user', content: userMessage, sources: [], id: null },
-      { type: 'assistant', content: '', sources: [], id: null },
+      { type: 'user', content: userMessage, sources: [], id: null, feedback: 0 },
+      { type: 'assistant', content: '', sources: [], id: null, feedback: 0 },
     ]);
 
     try {
@@ -148,6 +150,18 @@ export default function ChatContainer({ onLogout, onAdmin, currentUser }) {
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleFeedback = async (messageId, currentVote, nextVote) => {
+    if (!messageId) return;
+    // Optimistic update — backend confirms via response, errors revert.
+    setMessages(prev => prev.map(m => m.id === messageId ? { ...m, feedback: nextVote } : m));
+    try {
+      const verb = nextVote === 1 ? 'up' : nextVote === -1 ? 'down' : 'clear';
+      await chatService.setFeedback(messageId, verb);
+    } catch {
+      setMessages(prev => prev.map(m => m.id === messageId ? { ...m, feedback: currentVote } : m));
     }
   };
 
@@ -369,7 +383,14 @@ export default function ChatContainer({ onLogout, onAdmin, currentUser }) {
           {messages.map((msg, i) => {
             // Don't render the empty assistant placeholder — typing indicator shows instead
             if (waitingForFirstChunk && i === messages.length - 1 && msg.type === 'assistant') return null;
-            return <MessageBubble key={i} message={msg} isUser={msg.type === 'user'} />;
+            return (
+              <MessageBubble
+                key={i}
+                message={msg}
+                isUser={msg.type === 'user'}
+                onFeedback={handleFeedback}
+              />
+            );
           })}
 
           {waitingForFirstChunk && (

@@ -18,6 +18,15 @@ import sys
 import types
 from pathlib import Path
 
+# Force UTF-8 stdout/stderr so emoji/unicode in eval output (✓, ✗, em-dash, etc.)
+# don't blow up Windows consoles in legacy cp1252.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
 # Make sibling packages importable when run as a script from repo root.
 EVALS_DIR = Path(__file__).parent
 sys.path.insert(0, str(EVALS_DIR))
@@ -39,7 +48,10 @@ def _print_header(title: str) -> None:
 
 def run_ragas() -> int:
     _print_header("RAGAS — Retrieval-Augmented Generation Assessment")
-    import ragas.evaluate_ragas as ragas_runner
+    # NB: local package is `ragas_eval` (not `ragas`) to avoid shadowing the
+    # installed RAGAS PyPI package — `from ragas import evaluate` inside the
+    # runner needs to resolve to the library, not this directory.
+    import ragas_eval.evaluate_ragas as ragas_runner
     return ragas_runner.run()
 
 

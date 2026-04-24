@@ -132,7 +132,44 @@
   max-width: 68%;
 }
 
+/* ── Feedback (thumbs) ───────────────────────────────────── */
+.feedback-row {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+  max-width: 68%;
+}
+.feedback-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: #94a3b8;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.feedback-btn:hover {
+  background: #f1f5f9;
+  color: #475569;
+}
+.feedback-btn--active.feedback-btn--up {
+  color: #16a34a;
+  background: #ecfdf5;
+  border-color: #bbf7d0;
+}
+.feedback-btn--active.feedback-btn--down {
+  color: #dc2626;
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
 @media (max-width: 640px) {
   .message-bubble { max-width: 90%; }
   .sources-container { max-width: 90%; }
+  .feedback-row { max-width: 90%; }
 }

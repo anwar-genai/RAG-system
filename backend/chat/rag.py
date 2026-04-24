@@ -9,6 +9,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.documents import Document
 from langchain_classic.chains import create_retrieval_chain
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
+from langchain_community.callbacks import get_openai_callback
 from openai import APIConnectionError, APITimeoutError
 from PyPDF2 import PdfReader
 from typing import List, Dict, Tuple, Any
@@ -277,7 +278,9 @@ class RAGSystem:
         self,
         user_message: str,
         chat_history: List[Dict]
-    ) -> Tuple[str, List[str]]:
+    ) -> Tuple[str, List[str], Dict[str, Any]]:
+        """Returns (answer, sources, usage). `usage` is {tokens_in, tokens_out, cost_usd}
+        — captures LLM call only; embedding cost is tracked separately if needed."""
 
         formatted_history = "\n".join(
             f"{m['type'].capitalize()}: {m['content']}"
@@ -315,19 +318,25 @@ Answer clearly and concisely.
         )
 
         try:
-            result = retrieval_chain.invoke(
-                {
-                    "input": user_message,
-                    "chat_history": formatted_history
-                }
-            )
+            with get_openai_callback() as cb:
+                result = retrieval_chain.invoke(
+                    {
+                        "input": user_message,
+                        "chat_history": formatted_history
+                    }
+                )
 
             answer = result["answer"]
             context_docs = result["context"]
 
             sources = [] if self._is_no_answer(answer) else self._extract_sources(context_docs)
+            usage = {
+                "tokens_in": cb.prompt_tokens,
+                "tokens_out": cb.completion_tokens,
+                "cost_usd": round(cb.total_cost, 6),
+            }
 
-            return answer, sources
+            return answer, sources, usage
 
         except (APITimeoutError, APIConnectionError) as e:
             import traceback
@@ -385,16 +394,24 @@ Answer clearly and concisely.
             }
 
             answer_parts = []
-            for chunk in document_chain.stream(inputs):
-                if isinstance(chunk, dict) and "answer" in chunk:
-                    part = chunk["answer"]
-                elif hasattr(chunk, "content"):
-                    part = chunk.content
-                else:
-                    part = str(chunk) if chunk else ""
-                if part:
-                    answer_parts.append(part)
-                    yield ("chunk", part)
+            with get_openai_callback() as cb:
+                for chunk in document_chain.stream(inputs):
+                    if isinstance(chunk, dict) and "answer" in chunk:
+                        part = chunk["answer"]
+                    elif hasattr(chunk, "content"):
+                        part = chunk.content
+                    else:
+                        part = str(chunk) if chunk else ""
+                    if part:
+                        answer_parts.append(part)
+                        yield ("chunk", part)
+
+            usage = {
+                "tokens_in": cb.prompt_tokens,
+                "tokens_out": cb.completion_tokens,
+                "cost_usd": round(cb.total_cost, 6),
+            }
+            yield ("usage", usage)
 
             final_answer = "".join(answer_parts)
             final_sources = [] if self._is_no_answer(final_answer) else sources

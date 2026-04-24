@@ -104,6 +104,9 @@ def run() -> int:
 
     results = []
     criterion_totals: dict[str, list[int]] = {k: [] for k in ALL_CRITERIA}
+    cost_total = 0.0
+    tokens_in_total = 0
+    tokens_out_total = 0
 
     for item in golden:
         q = item["question"]
@@ -111,7 +114,10 @@ def run() -> int:
 
         docs = rag.retriever.invoke(q)
         context_text = "\n\n".join(doc.page_content for doc in docs)
-        answer, _ = rag.chat(q, [])
+        answer, _, usage = rag.chat(q, [])
+        cost_total += usage.get("cost_usd", 0.0)
+        tokens_in_total += usage.get("tokens_in", 0)
+        tokens_out_total += usage.get("tokens_out", 0)
 
         item_scores: dict[str, dict] = {}
         for criterion_name, criterion_desc in ALL_CRITERIA.items():
@@ -132,11 +138,22 @@ def run() -> int:
         if status == "FAIL":
             failed.append(criterion)
 
+    cost_summary = {
+        "queries": len(golden),
+        "tokens_in": tokens_in_total,
+        "tokens_out": tokens_out_total,
+        "cost_usd": round(cost_total, 6),
+        "cost_per_query_usd": round(cost_total / len(golden), 6) if golden else 0.0,
+    }
+    print(f"\n  RAG cost (judge calls excluded): ${cost_summary['cost_usd']:.4f}")
+
     out = {
+        "generated_at": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
         "threshold": SCORE_THRESHOLD,
         "averages": averages,
         "failed": failed,
         "details": results,
+        "cost_summary": cost_summary,
     }
     out_path = RESULTS_DIR / "geval_results.json"
     out_path.write_text(json.dumps(out, indent=2))
