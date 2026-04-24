@@ -14,6 +14,7 @@ near-duplicates without blocking nuanced updates.
 
 from __future__ import annotations
 
+import re
 import threading
 from pathlib import Path
 from typing import List, Optional
@@ -25,6 +26,27 @@ from langchain_core.documents import Document
 _SENTINEL_USER_ID = -1  # seed doc so FAISS can be created empty; filtered out everywhere
 _DEDUPE_L2_THRESHOLD = 0.4  # ~cosine sim > 0.92 for normalized embeddings
 _DEFAULT_FETCH_K = 30
+
+
+# ----------------------------------------------------------------------
+# PII guardrail
+# ----------------------------------------------------------------------
+# Belt-and-suspenders: the extraction prompt tells the LLM not to produce PII,
+# but we also hard-filter any extracted fact that matches these patterns before
+# it's ever written to the DB or the vector index.
+_PII_PATTERNS = [
+    re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),                              # US SSN
+    re.compile(r"\b(?:\d[ -]?){13,19}\b"),                             # credit-card-ish
+    re.compile(r"\bsk-[A-Za-z0-9]{20,}\b"),                            # OpenAI / Stripe secret key
+    re.compile(r"\b(?:Bearer|Token)\s+[A-Za-z0-9._\-]{16,}", re.I),    # auth headers
+    re.compile(r"\b[A-Fa-f0-9]{32,}\b"),                               # long hex secrets
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),                 # PEM private key
+]
+
+
+def contains_pii(text: str) -> bool:
+    """True if the text matches any obvious PII / secret pattern."""
+    return any(p.search(text) for p in _PII_PATTERNS)
 
 
 class MemoryStore:

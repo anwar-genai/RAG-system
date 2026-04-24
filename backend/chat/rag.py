@@ -361,6 +361,69 @@ Answer clearly and concisely.
             traceback.print_exc()
             raise UpstreamUnavailable(UPSTREAM_ERROR_MSG) from e
 
+    def extract_memories(
+        self,
+        user_message: str,
+        assistant_reply: str,
+    ) -> List[str]:
+        """Extract durable third-person facts about the user from one exchange.
+
+        Cheap gpt-4o-mini pass with a strict prompt. Returns ``[]`` on any error
+        or when nothing worth remembering was shared — never raises. Results are
+        post-filtered for obvious PII as a safety net in case the model ignores
+        the instruction.
+        """
+        from .memory import contains_pii  # late import — avoid cycle at module load
+
+        if not user_message or not assistant_reply:
+            return []
+
+        prompt = (
+            "You extract DURABLE facts about the USER from one exchange, to personalize future chats.\n\n"
+            "Return a JSON array of strings, nothing else. No prose, no markdown fences.\n\n"
+            "EXTRACT only:\n"
+            "- Identity / role (e.g. \"User is a data scientist at Acme\")\n"
+            "- Projects, tools, companies the user explicitly mentions working with\n"
+            "- Stable preferences (tone, format, expertise level)\n"
+            "- Long-term goals or constraints the user states about themselves\n\n"
+            "NEVER extract:\n"
+            "- Transient state (what they asked just now, what they're currently doing)\n"
+            "- Claims the ASSISTANT made — only what the user said about themselves\n"
+            "- Passwords, API keys, credit card numbers, SSNs, medical diagnoses, precise addresses\n\n"
+            "Format: 3rd person, one fact per string, <= 15 words each.\n"
+            "If nothing durable was shared, return exactly: []\n\n"
+            f"User: {user_message[:2000]}\n"
+            f"Assistant: {assistant_reply[:2000]}\n\n"
+            "JSON array:"
+        )
+
+        try:
+            resp = self.llm.invoke(prompt)
+            text = (resp.content if hasattr(resp, "content") else str(resp)).strip()
+            # Strip markdown fences defensively if the model ignored instructions.
+            if text.startswith("```"):
+                text = text.strip("`").strip()
+                if text.lower().startswith("json"):
+                    text = text[4:].strip()
+            facts = json.loads(text)
+        except (APITimeoutError, APIConnectionError, json.JSONDecodeError, Exception):
+            return []
+
+        if not isinstance(facts, list):
+            return []
+
+        cleaned: List[str] = []
+        for fact in facts:
+            if not isinstance(fact, str):
+                continue
+            fact = fact.strip()
+            if not fact or len(fact) > 240:
+                continue
+            if contains_pii(fact):
+                continue
+            cleaned.append(fact)
+        return cleaned
+
     def generate_title(self, user_message: str, assistant_reply: str) -> str:
         """Produce a short (<=6 word) title from the first exchange.
         Returns empty string on any failure — caller falls back to message preview."""
