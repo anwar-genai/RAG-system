@@ -10,8 +10,45 @@ class UserProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='profile')
     role = models.CharField(max_length=10, choices=ROLES, default='user')
 
+    # Personal context — merged into the system prompt on every chat turn.
+    # bio: short free-text description the user writes about themselves.
+    # preferences: structured hints (tone, expertise level, etc.).
+    bio = models.TextField(blank=True, default='')
+    preferences = models.JSONField(default=dict, blank=True)
+
     def __str__(self):
         return f"{self.user.username} ({self.role})"
+
+
+class UserMemory(models.Model):
+    """Durable facts the assistant has learned about a specific user.
+
+    Populated by the auto-extraction pass after each assistant reply, and by
+    manual entries from the memory management UI. Retrieved alongside the
+    shared KB on every chat turn so answers can be personalized."""
+
+    SOURCES = [
+        ('auto', 'Auto-extracted'),
+        ('manual', 'Manual entry'),
+    ]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='memories')
+    content = models.TextField()
+    source = models.CharField(max_length=10, choices=SOURCES, default='auto')
+    # Nullable FK: manual memories have no originating message.
+    source_message = models.ForeignKey(
+        'Message', on_delete=models.SET_NULL, null=True, blank=True, related_name='extracted_memories',
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [models.Index(fields=['user', 'is_active'])]
+
+    def __str__(self):
+        return f"{self.user.username}: {self.content[:60]}"
 
 
 class KnowledgeDocument(models.Model):
