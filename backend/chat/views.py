@@ -356,7 +356,16 @@ def upload_documents(request):
 def admin_stats(_request):
     """System-wide overview stats for the admin dashboard."""
     kb_path = Path(__file__).parent.parent / "knowledge_base"
-    kb_size = sum(f.stat().st_size for f in kb_path.iterdir() if f.is_file()) if kb_path.exists() else 0
+
+    kb_size = 0
+    documents_by_type: dict[str, int] = {}
+    if kb_path.exists():
+        for f in kb_path.iterdir():
+            if not f.is_file():
+                continue
+            kb_size += f.stat().st_size
+            ext = f.suffix.lstrip(".").upper() or "OTHER"
+            documents_by_type[ext] = documents_by_type.get(ext, 0) + 1
 
     return Response({
         "total_users": User.objects.count(),
@@ -365,7 +374,61 @@ def admin_stats(_request):
         "total_messages": Message.objects.count(),
         "total_documents": KnowledgeDocument.objects.count(),
         "kb_size_bytes": kb_size,
+        "documents_by_type": documents_by_type,
     })
+
+
+# ---------------------------------------------------------------------------
+# Eval results — surfaces evals/results/*.json to the admin dashboard so
+# scores and cost are visible without SSH-ing in to cat the JSON.
+# ---------------------------------------------------------------------------
+
+_EVALS_RESULTS_DIR = Path(__file__).resolve().parent.parent.parent / "evals" / "results"
+_REPORT_PDF_PATH = _EVALS_RESULTS_DIR / "Accuracy_Report.pdf"
+
+
+def _read_json_safe(path: Path) -> dict | None:
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated, IsAdminRole])
+def admin_eval_results(_request):
+    """Return the latest RAGAS + G-Eval result JSONs and whether the PDF is ready."""
+    ragas = _read_json_safe(_EVALS_RESULTS_DIR / "ragas_results.json")
+    geval = _read_json_safe(_EVALS_RESULTS_DIR / "geval_results.json")
+    return Response({
+        "ragas": ragas,
+        "geval": geval,
+        "pdf_available": _REPORT_PDF_PATH.exists(),
+        "pdf_generated_at": (
+            __import__("datetime").datetime.fromtimestamp(_REPORT_PDF_PATH.stat().st_mtime).isoformat(timespec="seconds")
+            if _REPORT_PDF_PATH.exists() else None
+        ),
+    })
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated, IsAdminRole])
+def admin_eval_report_pdf(_request):
+    """Stream the latest Accuracy_Report.pdf for admin download."""
+    from django.http import FileResponse
+    if not _REPORT_PDF_PATH.exists():
+        return Response(
+            {"error": "Report not generated yet. Run: python evals/run_all.py && python evals/report.py"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    return FileResponse(
+        _REPORT_PDF_PATH.open("rb"),
+        as_attachment=True,
+        filename="Accuracy_Report.pdf",
+        content_type="application/pdf",
+    )
 
 
 @api_view(["GET"])

@@ -14,14 +14,12 @@ const EXAMPLE_PROMPTS = [
 export default function ChatContainer({ onLogout, onAdmin, currentUser }) {
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [uploading, setUploading] = useState(false);
   const [sessionId, setSessionId] = useState(null);
   const [sessions, setSessions] = useState([]);
   const [error, setError] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const messagesEndRef = useRef(null);
-  const fileInputRef = useRef(null);
   const userMenuRef = useRef(null);
 
   const isAdmin = currentUser?.role === 'admin';
@@ -165,27 +163,6 @@ export default function ChatContainer({ onLogout, onAdmin, currentUser }) {
     }
   };
 
-  const handleFilesSelected = async (e) => {
-    const files = Array.from(e.target.files || []);
-    if (!files.length) return;
-    setUploading(true);
-    setError(null);
-    try {
-      const result = await chatService.uploadDocuments(files);
-      const count = result.uploaded?.length || 0;
-      setMessages(prev => [...prev, {
-        type: 'assistant',
-        content: `✓ ${count} file${count !== 1 ? 's' : ''} uploaded and indexed successfully.${result.skipped?.length ? ` (${result.skipped.length} skipped — unsupported format)` : ''}`,
-        sources: [], id: null,
-      }]);
-    } catch (err) {
-      setError(err.message || 'Upload failed.');
-    } finally {
-      setUploading(false);
-      e.target.value = '';
-    }
-  };
-
   const groupSessions = () => {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
@@ -255,32 +232,6 @@ export default function ChatContainer({ onLogout, onAdmin, currentUser }) {
 
         {/* Bottom actions */}
         <div className="sidebar-footer">
-          {/* Upload — admin only */}
-          {sidebarOpen && isAdmin && (
-            <>
-              <button
-                className="sidebar-action-btn"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
-              >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                  <polyline points="17 8 12 3 7 8"/>
-                  <line x1="12" y1="3" x2="12" y2="15"/>
-                </svg>
-                {uploading ? 'Uploading…' : 'Upload Docs'}
-              </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                accept=".pdf,.txt,.md,.docx,.csv"
-                style={{ display: 'none' }}
-                onChange={handleFilesSelected}
-              />
-            </>
-          )}
-
           {/* User menu */}
           <div className="sidebar-user-wrap" ref={userMenuRef}>
             {userMenuOpen && (

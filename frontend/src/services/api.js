@@ -64,15 +64,6 @@ export const chatService = {
     return response.data;
   },
 
-  uploadDocuments: async (files) => {
-    const formData = new FormData();
-    files.forEach((file) => formData.append('files', file));
-    const response = await apiClient.post('documents/upload/', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-    return response.data;
-  },
-
   setFeedback: async (messageId, vote /* 'up' | 'down' | 'clear' */) => {
     const response = await apiClient.patch(`messages/${messageId}/feedback/`, { vote });
     return response.data;

@@ -34,4 +34,6 @@ urlpatterns = [
     path('api/admin/users/<int:user_id>/', views.admin_user_detail, name='admin_user_detail'),
     path('api/admin/documents/', views.admin_documents, name='admin_documents'),
     path('api/admin/documents/<str:doc_name>/', views.admin_document_delete, name='admin_document_delete'),
+    path('api/admin/eval-results/', views.admin_eval_results, name='admin_eval_results'),
+    path('api/admin/eval-report/', views.admin_eval_report_pdf, name='admin_eval_report_pdf'),
 ]
