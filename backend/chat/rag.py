@@ -76,6 +76,7 @@ class RAGSystem:
         self.manifest_path = self.vector_store_dir / "manifest.json"
         self.vector_store = None
         self.retriever = None
+        self.failed_files: List[Tuple[str, str]] = []
         self._initialize_knowledge_base()
 
     # -------------------------
@@ -125,23 +126,40 @@ class RAGSystem:
 
     def _load_knowledge_documents(self) -> List[Document]:
         documents = []
+        self.failed_files: List[Tuple[str, str]] = []
 
         for file_path in self.kb_path.iterdir():
             if not file_path.is_file():
                 continue
 
             ext = file_path.suffix.lower()
+            supported = {".pdf", ".txt", ".md", ".docx", ".csv"}
+            if ext not in supported:
+                continue
+
             try:
                 if ext == ".pdf":
-                    documents.extend(self._load_pdf(file_path))
+                    loaded = self._load_pdf(file_path)
                 elif ext in {".txt", ".md"}:
-                    documents.extend(self._load_text_like_file(file_path))
+                    loaded = self._load_text_like_file(file_path)
                 elif ext == ".docx":
-                    documents.extend(self._load_docx(file_path))
+                    loaded = self._load_docx(file_path)
                 elif ext == ".csv":
-                    documents.extend(self._load_csv(file_path))
+                    loaded = self._load_csv(file_path)
+                else:
+                    loaded = []
             except Exception as e:
                 print(f"Failed to load {file_path}: {e}")
+                self.failed_files.append((file_path.name, f"{type(e).__name__}: {e}"))
+                continue
+
+            if not loaded:
+                # File parsed without error but produced no extractable text — flag it
+                # so callers can mark the DB row as failed rather than "indexed".
+                self.failed_files.append((file_path.name, "no extractable text"))
+                continue
+
+            documents.extend(loaded)
 
         return documents
 
@@ -342,6 +360,24 @@ Answer clearly and concisely.
             import traceback
             traceback.print_exc()
             raise UpstreamUnavailable(UPSTREAM_ERROR_MSG) from e
+
+    def generate_title(self, user_message: str, assistant_reply: str) -> str:
+        """Produce a short (<=6 word) title from the first exchange.
+        Returns empty string on any failure — caller falls back to message preview."""
+        prompt = (
+            "Summarize this conversation in a short descriptive title of 3-6 words. "
+            "Return ONLY the title, no quotes, no punctuation at the end.\n\n"
+            f"User: {user_message[:500]}\n"
+            f"Assistant: {assistant_reply[:500]}"
+        )
+        try:
+            resp = self.llm.invoke(prompt)
+            text = (resp.content if hasattr(resp, 'content') else str(resp)).strip()
+            # Strip quotes/trailing punctuation defensively
+            text = text.strip('"\'').rstrip('.').strip()
+            return text[:60]
+        except Exception:
+            return ""
 
     def chat_stream(
         self,

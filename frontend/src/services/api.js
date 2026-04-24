@@ -64,6 +64,20 @@ export const chatService = {
     return response.data;
   },
 
+  deleteSession: async (sessionId) => {
+    await apiClient.delete(`session/${sessionId}/`);
+  },
+
+  renameSession: async (sessionId, title) => {
+    const response = await apiClient.patch(`session/${sessionId}/`, { title });
+    return response.data;
+  },
+
+  setPinned: async (sessionId, pinned) => {
+    const response = await apiClient.patch(`session/${sessionId}/`, { pinned });
+    return response.data;
+  },
+
   setFeedback: async (messageId, vote /* 'up' | 'down' | 'clear' */) => {
     const response = await apiClient.patch(`messages/${messageId}/feedback/`, { vote });
     return response.data;

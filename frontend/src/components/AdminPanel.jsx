@@ -332,10 +332,17 @@ function DocumentsTab() {
       const res = await adminService.uploadDocuments(valid);
       const saved = res.uploaded?.length || 0;
       const skipped = (res.skipped?.length || 0) + rejected;
-      setNotice(
-        `Uploaded ${saved} file${saved !== 1 ? 's' : ''} and rebuilt the index.`
-        + (skipped ? ` (${skipped} skipped — unsupported format)` : '')
-      );
+      const failed = res.failed || [];
+      if (failed.length) {
+        const detail = failed.map(f => `${f.name} (${f.reason})`).join(', ');
+        setError(`Indexing failed for ${failed.length} file(s): ${detail}`);
+      }
+      if (saved) {
+        setNotice(
+          `Uploaded ${saved} file${saved !== 1 ? 's' : ''} and rebuilt the index.`
+          + (skipped ? ` (${skipped} skipped — unsupported format)` : '')
+        );
+      }
       load();
     } catch (err) {
       setError(err?.response?.data?.error || 'Upload failed.');
@@ -591,12 +598,16 @@ const s = {
     borderBottom: '1px solid #e2e8f0', background: '#fff',
   },
   tabBtn: {
-    padding: '10px 20px', border: 'none', background: 'none', cursor: 'pointer',
+    padding: '10px 20px',
+    borderTop: 'none', borderLeft: 'none', borderRight: 'none',
+    borderBottom: '2px solid transparent',
+    background: 'none', cursor: 'pointer',
     fontSize: '14px', fontWeight: 500, color: '#64748b', borderRadius: '8px 8px 0 0',
     transition: 'all 0.15s',
+    outline: 'none',
   },
   tabActive: {
-    color: '#4f46e5', background: '#ede9fe', borderBottom: '2px solid #4f46e5',
+    color: '#4f46e5', background: '#ede9fe', borderBottomColor: '#4f46e5',
   },
   content: { padding: '28px 32px', maxWidth: '1200px', margin: '0 auto' },
 

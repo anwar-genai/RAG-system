@@ -168,7 +168,14 @@ def _stream_chat_generator(session, user_message, user_msg_obj, request_id=''):
                     tokens_out=usage.get('tokens_out'),
                     cost_usd=usage.get('cost_usd'),
                 )
-                yield f"data: {json.dumps({'t': 'done', 'sources': value, 'message_id': ai_msg_obj.id, 'session_id': str(session.session_id)})}\n\n"
+                # Auto-title on the first assistant reply (exactly 2 messages after save).
+                # Failure is non-fatal — the sidebar falls back to the message preview.
+                if not session.title and session.messages.count() == 2:
+                    title = rag_system.generate_title(user_message, "".join(full_answer))
+                    if title:
+                        ChatSession.objects.filter(pk=session.pk).update(title=title)
+                        session.title = title
+                yield f"data: {json.dumps({'t': 'done', 'sources': value, 'message_id': ai_msg_obj.id, 'session_id': str(session.session_id), 'title': session.title})}\n\n"
             elif kind == "error":
                 errored = True
                 yield f"data: {json.dumps({'t': 'error', 'error': value})}\n\n"
@@ -242,14 +249,43 @@ def message_feedback(request, message_id):
     return Response({"id": msg.id, "feedback": msg.feedback})
 
 
-@api_view(['GET'])
+@api_view(['GET', 'PATCH', 'DELETE'])
 @permission_classes([IsAuthenticated])
 def get_session(request, session_id):
     try:
         session = ChatSession.objects.get(session_id=session_id, user=request.user)
-        return Response(ChatSessionSerializer(session).data)
     except ChatSession.DoesNotExist:
         return Response({"error": "Session not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == 'GET':
+        return Response(ChatSessionSerializer(session).data)
+
+    if request.method == 'DELETE':
+        session.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    # PATCH — rename or pin toggle
+    changed = False
+    if 'title' in request.data:
+        title = (request.data.get('title') or '').strip()[:120]
+        if title != session.title:
+            session.title = title
+            changed = True
+    if 'pinned' in request.data:
+        pinned = bool(request.data.get('pinned'))
+        if pinned != session.pinned:
+            session.pinned = pinned
+            changed = True
+    if changed:
+        # Don't bump updated_at for pin toggles or renames — preserves sort order
+        ChatSession.objects.filter(pk=session.pk).update(
+            title=session.title, pinned=session.pinned,
+        )
+    return Response({
+        "session_id": str(session.session_id),
+        "title": session.title,
+        "pinned": session.pinned,
+    })
 
 
 @api_view(['GET'])
@@ -262,19 +298,23 @@ def list_sessions(request):
         ChatSession.objects.filter(user=request.user)
         .annotate(message_count=Count('messages'))
         .filter(message_count__gt=0)
-        .order_by('-updated_at')
+        .order_by('-pinned', '-updated_at')
     )
 
     data = []
     for s in sessions:
-        first_msg = s.messages.filter(message_type='user').order_by('created_at').first()
-        if first_msg:
-            title = first_msg.content[:60] + ('…' if len(first_msg.content) > 60 else '')
+        if s.title:
+            title = s.title
         else:
-            title = 'New conversation'
+            first_msg = s.messages.filter(message_type='user').order_by('created_at').first()
+            if first_msg:
+                title = first_msg.content[:60] + ('…' if len(first_msg.content) > 60 else '')
+            else:
+                title = 'New conversation'
         data.append({
             "session_id": str(s.session_id),
             "title": title,
+            "pinned": s.pinned,
             "message_count": s.message_count,
             "created_at": s.created_at,
             "updated_at": s.updated_at,
@@ -336,7 +376,7 @@ def upload_documents(request):
         return Response({"error": "No supported files uploaded.", "skipped": skipped}, status=status.HTTP_400_BAD_REQUEST)
 
     try:
-        reload_rag_system()
+        rag = reload_rag_system()
     except Exception as e:
         KnowledgeDocument.objects.filter(name__in=saved).update(status="failed")
         return Response(
@@ -344,7 +384,25 @@ def upload_documents(request):
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
-    return Response({"uploaded": saved, "skipped": skipped, "message": "Documents uploaded and index refreshed."}, status=status.HTTP_201_CREATED)
+    # Reflect per-file indexing failures (parser errors, empty extractions) in the DB
+    # so the admin UI shows "failed" instead of a misleading "indexed".
+    failed = list(getattr(rag, "failed_files", []) or [])
+    failed_names = {name for name, _ in failed}
+    if failed_names:
+        KnowledgeDocument.objects.filter(name__in=failed_names).update(status="failed")
+
+    indexed = [n for n in saved if n not in failed_names]
+    failed_for_saved = [{"name": n, "reason": r} for n, r in failed if n in set(saved)]
+
+    return Response(
+        {
+            "uploaded": indexed,
+            "failed": failed_for_saved,
+            "skipped": skipped,
+            "message": "Documents uploaded and index refreshed.",
+        },
+        status=status.HTTP_201_CREATED,
+    )
 
 
 # ---------------------------------------------------------------------------

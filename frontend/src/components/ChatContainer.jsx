@@ -19,6 +19,8 @@ export default function ChatContainer({ onLogout, onAdmin, currentUser }) {
   const [error, setError] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [editingTitle, setEditingTitle] = useState('');
   const messagesEndRef = useRef(null);
   const userMenuRef = useRef(null);
 
@@ -163,11 +165,58 @@ export default function ChatContainer({ onLogout, onAdmin, currentUser }) {
     }
   };
 
+  const handleDeleteSession = async (sid, title) => {
+    if (!window.confirm(`Delete "${title}"? This cannot be undone.`)) return;
+    try {
+      await chatService.deleteSession(sid);
+      setSessions(prev => prev.filter(s => s.session_id !== sid));
+      if (sid === sessionId) {
+        setSessionId(null);
+        setMessages([]);
+        localStorage.removeItem('chat_session_id');
+      }
+    } catch {
+      setError('Failed to delete conversation.');
+    }
+  };
+
+  const handleTogglePin = async (sid, currentPinned) => {
+    // Optimistic — revert on error
+    setSessions(prev => prev.map(s => s.session_id === sid ? { ...s, pinned: !currentPinned } : s));
+    try {
+      await chatService.setPinned(sid, !currentPinned);
+    } catch {
+      setSessions(prev => prev.map(s => s.session_id === sid ? { ...s, pinned: currentPinned } : s));
+    }
+  };
+
+  const startRename = (sid, currentTitle) => {
+    setEditingId(sid);
+    setEditingTitle(currentTitle);
+  };
+
+  const commitRename = async () => {
+    const sid = editingId;
+    const title = editingTitle.trim();
+    setEditingId(null);
+    if (!sid || !title) return;
+    setSessions(prev => prev.map(s => s.session_id === sid ? { ...s, title } : s));
+    try {
+      await chatService.renameSession(sid, title);
+    } catch {
+      setError('Failed to rename.');
+      loadSessions();
+    }
+  };
+
+  const cancelRename = () => { setEditingId(null); setEditingTitle(''); };
+
   const groupSessions = () => {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
-    const groups = { Today: [], Yesterday: [], Earlier: [] };
+    const groups = { Pinned: [], Today: [], Yesterday: [], Earlier: [] };
     sessions.forEach(s => {
+      if (s.pinned) { groups.Pinned.push(s); return; }
       const d = new Date(s.updated_at); d.setHours(0, 0, 0, 0);
       if (d >= today) groups.Today.push(s);
       else if (d >= yesterday) groups.Yesterday.push(s);
@@ -210,17 +259,75 @@ export default function ChatContainer({ onLogout, onAdmin, currentUser }) {
               items.length === 0 ? null : (
                 <div key={label} className="session-group">
                   <div className="session-group-label">{label}</div>
-                  {items.map(s => (
-                    <button
-                      key={s.session_id}
-                      className={`session-item ${s.session_id === sessionId ? 'session-item--active' : ''}`}
-                      onClick={() => switchSession(s.session_id)}
-                      title={s.title}
-                    >
-                      <span className="session-item-title">{s.title}</span>
-                      <span className="session-item-count">{s.message_count}</span>
-                    </button>
-                  ))}
+                  {items.map(s => {
+                    const isEditing = editingId === s.session_id;
+                    const isActive = s.session_id === sessionId;
+                    return (
+                      <div
+                        key={s.session_id}
+                        className={`session-item ${isActive ? 'session-item--active' : ''} ${isEditing ? 'session-item--editing' : ''}`}
+                        onClick={() => !isEditing && switchSession(s.session_id)}
+                        title={isEditing ? '' : s.title}
+                      >
+                        {s.pinned && !isEditing && (
+                          <svg className="session-pin-icon" width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/>
+                          </svg>
+                        )}
+                        {isEditing ? (
+                          <input
+                            className="session-rename-input"
+                            autoFocus
+                            value={editingTitle}
+                            onChange={e => setEditingTitle(e.target.value)}
+                            onBlur={commitRename}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') commitRename();
+                              else if (e.key === 'Escape') cancelRename();
+                            }}
+                            onClick={e => e.stopPropagation()}
+                            maxLength={120}
+                          />
+                        ) : (
+                          <span className="session-item-title">{s.title}</span>
+                        )}
+                        {!isEditing && (
+                          <div className="session-actions" onClick={e => e.stopPropagation()}>
+                            <button
+                              className="session-action-btn"
+                              onClick={() => handleTogglePin(s.session_id, s.pinned)}
+                              title={s.pinned ? 'Unpin' : 'Pin'}
+                            >
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M12 2l2 7h7l-5.5 4.5L17 21l-5-3.5L7 21l1.5-7.5L3 9h7z"/>
+                              </svg>
+                            </button>
+                            <button
+                              className="session-action-btn"
+                              onClick={() => startRename(s.session_id, s.title)}
+                              title="Rename"
+                            >
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M12 20h9"/>
+                                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+                              </svg>
+                            </button>
+                            <button
+                              className="session-action-btn session-action-btn--danger"
+                              onClick={() => handleDeleteSession(s.session_id, s.title)}
+                              title="Delete"
+                            >
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <polyline points="3 6 5 6 21 6"/>
+                                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                                <path d="M10 11v6M14 11v6"/>
+                              </svg>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )
             )}

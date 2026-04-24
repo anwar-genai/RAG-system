@@ -37,14 +37,16 @@ class ChatSession(models.Model):
         User, on_delete=models.CASCADE, null=True, blank=True, related_name='sessions'
     )
     session_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    title = models.CharField(max_length=120, blank=True, default='')
+    pinned = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ['-updated_at']
+        ordering = ['-pinned', '-updated_at']
 
     def __str__(self):
-        return f"Session {self.session_id}"
+        return self.title or f"Session {self.session_id}"
 
 
 class Message(models.Model):

@@ -98,14 +98,37 @@
 }
 .session-item:hover { background: rgba(255,255,255,0.06); color: #e2e8f0; }
 .session-item--active { background: rgba(99, 102, 241, 0.18); color: #a5b4fc; }
+.session-item--editing { background: rgba(99, 102, 241, 0.12); }
+
+.session-pin-icon {
+  color: #a5b4fc; flex-shrink: 0; opacity: 0.7;
+}
 
 .session-item-title {
   flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.session-item-count {
-  font-size: 11px; color: #475569; flex-shrink: 0;
-  background: rgba(255,255,255,0.07); padding: 1px 6px; border-radius: 10px;
+.session-rename-input {
+  flex: 1; min-width: 0;
+  background: rgba(0,0,0,0.25); border: 1px solid rgba(99, 102, 241, 0.5);
+  color: #e2e8f0; font-size: 13px;
+  padding: 2px 6px; border-radius: 4px; outline: none;
+  font-family: inherit;
 }
+
+/* Hover-revealed action icons */
+.session-actions {
+  display: none; align-items: center; gap: 2px; flex-shrink: 0;
+}
+.session-item:hover .session-actions { display: flex; }
+.session-action-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px;
+  border: none; background: transparent; cursor: pointer;
+  color: #64748b; border-radius: 4px;
+  transition: background 0.1s, color 0.1s;
+}
+.session-action-btn:hover { background: rgba(255,255,255,0.1); color: #e2e8f0; }
+.session-action-btn--danger:hover { color: #f87171; }
 .session-empty {
   font-size: 13px; color: #475569; padding: 16px 8px; text-align: center;
 }
