@@ -360,6 +360,117 @@ def create_session(request):
 
 
 # ---------------------------------------------------------------------------
+# Personal memory — profile + UserMemory CRUD
+# ---------------------------------------------------------------------------
+
+_MEMORY_CONTENT_MAX = 240
+_BIO_MAX = 2000
+
+
+@api_view(["GET", "PATCH"])
+@permission_classes([IsAuthenticated])
+def memory_profile(request):
+    from .models import UserProfile
+
+    profile, _ = UserProfile.objects.get_or_create(
+        user=request.user, defaults={"role": "user"},
+    )
+
+    if request.method == "GET":
+        return Response({"bio": profile.bio, "preferences": profile.preferences or {}})
+
+    bio = request.data.get("bio")
+    prefs = request.data.get("preferences")
+    fields = []
+    if bio is not None:
+        if not isinstance(bio, str) or len(bio) > _BIO_MAX:
+            return Response(
+                {"error": f"bio must be a string up to {_BIO_MAX} characters"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        profile.bio = bio.strip()
+        fields.append("bio")
+    if prefs is not None:
+        if not isinstance(prefs, dict):
+            return Response({"error": "preferences must be an object"}, status=status.HTTP_400_BAD_REQUEST)
+        profile.preferences = prefs
+        fields.append("preferences")
+    if fields:
+        profile.save(update_fields=fields)
+    return Response({"bio": profile.bio, "preferences": profile.preferences or {}})
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def memory_list(request):
+    from .models import UserMemory
+    from .memory import get_memory_store, contains_pii
+
+    if request.method == "GET":
+        rows = UserMemory.objects.filter(
+            user=request.user, is_active=True,
+        ).order_by("-created_at")
+        return Response([
+            {
+                "id": m.id,
+                "content": m.content,
+                "source": m.source,
+                "created_at": m.created_at,
+            }
+            for m in rows
+        ])
+
+    content = (request.data.get("content") or "").strip()
+    if not content:
+        return Response({"error": "content is required"}, status=status.HTTP_400_BAD_REQUEST)
+    if len(content) > _MEMORY_CONTENT_MAX:
+        return Response(
+            {"error": f"content must be {_MEMORY_CONTENT_MAX} characters or fewer"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if contains_pii(content):
+        return Response(
+            {"error": "content looks like it contains PII or a secret"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    mem = UserMemory.objects.create(user=request.user, content=content, source="manual")
+    if not get_memory_store().add(request.user.id, content, mem.id):
+        # Near-duplicate of an existing memory — drop the orphan DB row.
+        mem.delete()
+        return Response(
+            {"error": "a similar memory already exists"},
+            status=status.HTTP_409_CONFLICT,
+        )
+    return Response(
+        {
+            "id": mem.id,
+            "content": mem.content,
+            "source": mem.source,
+            "created_at": mem.created_at,
+        },
+        status=status.HTTP_201_CREATED,
+    )
+
+
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticated])
+def memory_delete(request, memory_id):
+    from .models import UserMemory
+    from .memory import get_memory_store
+
+    try:
+        mem = UserMemory.objects.get(pk=memory_id, user=request.user, is_active=True)
+    except UserMemory.DoesNotExist:
+        return Response({"error": "memory not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    mem.is_active = False
+    mem.save(update_fields=["is_active"])
+    get_memory_store().delete(mem.id)
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ---------------------------------------------------------------------------
 # Document upload
 # ---------------------------------------------------------------------------
 
