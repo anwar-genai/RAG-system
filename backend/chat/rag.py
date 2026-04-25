@@ -2,6 +2,7 @@ import csv
 import hashlib
 import json
 import os
+import re
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
@@ -72,6 +73,89 @@ User question:
 
 Answer clearly and concisely.
 """
+
+
+CONVERSATIONAL_PROMPT_TEMPLATE = """
+You are DocuChat, a helpful AI assistant for chatting with uploaded documents.
+Reply briefly and warmly to greetings, capability questions, and small talk.
+If asked what you can do, mention you can answer questions about the user's
+uploaded documents and remember things they tell you about themselves.
+
+Conversation history:
+{chat_history}
+
+User message:
+{input}
+
+Reply concisely.
+"""
+
+
+PERSONAL_PROMPT_TEMPLATE = """
+The user is asking a question about themselves. Answer using ONLY the profile
+and memories below. If neither contains the answer, say so plainly — for
+example: "I don't know that about you yet — feel free to tell me."
+Do NOT respond with the document-fallback sentence; this is not a document
+question.
+
+About the user:
+{user_profile}
+
+What you remember about this user:
+{user_memories}
+
+Conversation history:
+{chat_history}
+
+User question:
+{input}
+
+Answer briefly and personally.
+"""
+
+
+# Default to 'factual' on ambiguity so we never strip grounding from real questions.
+_GREETING_START_RE = re.compile(
+    r"^\s*(hi+|hello+|hey+|yo+|sup|good\s+(morning|afternoon|evening|day)|"
+    r"howdy|greetings|thanks?|thank\s+you|thx|ty|bye|goodbye|cheers)\b",
+    re.IGNORECASE,
+)
+
+_META_PATTERNS = [
+    re.compile(r"\b(can|could|would|will)\s+you\s+(help|assist)\b", re.I),
+    re.compile(r"\bwhat\s+can\s+you\s+(do|help\s+with)\b", re.I),
+    re.compile(r"\bwho\s+are\s+you\b", re.I),
+    re.compile(r"\bhow\s+(do|does)\s+(you|this)\s+work\b", re.I),
+    re.compile(r"\bhow\s+are\s+you\b", re.I),
+]
+
+_PERSONAL_PATTERNS = [
+    re.compile(r"\bwhat\s+do\s+you\s+(know|remember)\s+about\s+me\b", re.I),
+    re.compile(r"\bwho\s+am\s+i\b", re.I),
+    re.compile(r"\bwhat(?:'?s|\s+is)\s+my\s+name\b", re.I),
+    re.compile(r"\bwhat\s+(am|was)\s+i\s+(working|building|doing)\b", re.I),
+    re.compile(r"\bremember\s+about\s+me\b", re.I),
+    re.compile(r"\babout\s+myself\b", re.I),
+    re.compile(r"\bmy\s+(role|job|profession|background)\b", re.I),
+]
+
+
+def classify_intent(message: str) -> str:
+    """Return one of 'conversational', 'personal', or 'factual'."""
+    text = (message or "").strip()
+    if not text:
+        return "conversational"
+
+    if any(p.search(text) for p in _PERSONAL_PATTERNS):
+        return "personal"
+
+    if _GREETING_START_RE.search(text) and len(text.split()) <= 8:
+        return "conversational"
+
+    if any(p.search(text) for p in _META_PATTERNS):
+        return "conversational"
+
+    return "factual"
 
 
 def _format_memory_block(memories: List[str]) -> str:
@@ -393,6 +477,10 @@ class RAGSystem:
             for m in chat_history[-4:]
         )
 
+        intent = classify_intent(user_message)
+        if intent != "factual":
+            return self._chat_direct(user_message, formatted_history, user_id, intent)
+
         profile_text, memory_texts = self.build_personal_context(user_id, user_message)
 
         prompt = ChatPromptTemplate.from_template(CHAT_PROMPT_TEMPLATE)
@@ -430,6 +518,37 @@ class RAGSystem:
 
             return answer, sources, usage
 
+        except (APITimeoutError, APIConnectionError) as e:
+            import traceback
+            traceback.print_exc()
+            raise UpstreamUnavailable(UPSTREAM_ERROR_MSG) from e
+
+    def _chat_direct(
+        self,
+        user_message: str,
+        formatted_history: str,
+        user_id: int | None,
+        intent: str,
+    ) -> Tuple[str, List[str], Dict[str, Any]]:
+        """LLM-only reply for conversational or personal-context turns. No retrieval."""
+        template = PERSONAL_PROMPT_TEMPLATE if intent == "personal" else CONVERSATIONAL_PROMPT_TEMPLATE
+        inputs: Dict[str, Any] = {"input": user_message, "chat_history": formatted_history}
+        if intent == "personal":
+            profile_text, memory_texts = self.build_personal_context(user_id, user_message)
+            inputs["user_profile"] = _format_profile(profile_text)
+            inputs["user_memories"] = _format_memory_block(memory_texts)
+
+        chain = ChatPromptTemplate.from_template(template) | self.llm
+        try:
+            with get_openai_callback() as cb:
+                resp = chain.invoke(inputs)
+            answer = resp.content if hasattr(resp, "content") else str(resp)
+            usage = {
+                "tokens_in": cb.prompt_tokens,
+                "tokens_out": cb.completion_tokens,
+                "cost_usd": round(cb.total_cost, 6),
+            }
+            return answer, [], usage
         except (APITimeoutError, APIConnectionError) as e:
             import traceback
             traceback.print_exc()
@@ -520,6 +639,7 @@ class RAGSystem:
         self,
         user_message: str,
         chat_history: List[Dict],
+        user_id: int | None = None,
     ):
         """
         Stream the RAG response token-by-token.
@@ -529,6 +649,11 @@ class RAGSystem:
             f"{m['type'].capitalize()}: {m['content']}"
             for m in chat_history[-4:]
         )
+
+        intent = classify_intent(user_message)
+        if intent != "factual":
+            yield from self._chat_stream_direct(user_message, formatted_history, user_id, intent)
+            return
 
         prompt = ChatPromptTemplate.from_template(
             """
@@ -590,6 +715,46 @@ Answer clearly and concisely.
             final_sources = [] if self._is_no_answer(final_answer) else sources
             yield ("done", final_sources)
 
+        except (APITimeoutError, APIConnectionError):
+            import traceback
+            traceback.print_exc()
+            yield ("error", UPSTREAM_ERROR_MSG)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            yield ("error", GENERIC_ERROR_MSG)
+
+    def _chat_stream_direct(
+        self,
+        user_message: str,
+        formatted_history: str,
+        user_id: int | None,
+        intent: str,
+    ):
+        """Streaming LLM-only reply for conversational or personal-context turns. No retrieval."""
+        template = PERSONAL_PROMPT_TEMPLATE if intent == "personal" else CONVERSATIONAL_PROMPT_TEMPLATE
+        inputs: Dict[str, Any] = {"input": user_message, "chat_history": formatted_history}
+        if intent == "personal":
+            profile_text, memory_texts = self.build_personal_context(user_id, user_message)
+            inputs["user_profile"] = _format_profile(profile_text)
+            inputs["user_memories"] = _format_memory_block(memory_texts)
+
+        chain = ChatPromptTemplate.from_template(template) | self.llm_streaming
+        try:
+            answer_parts = []
+            with get_openai_callback() as cb:
+                for chunk in chain.stream(inputs):
+                    part = chunk.content if hasattr(chunk, "content") else (str(chunk) if chunk else "")
+                    if part:
+                        answer_parts.append(part)
+                        yield ("chunk", part)
+            usage = {
+                "tokens_in": cb.prompt_tokens,
+                "tokens_out": cb.completion_tokens,
+                "cost_usd": round(cb.total_cost, 6),
+            }
+            yield ("usage", usage)
+            yield ("done", [])
         except (APITimeoutError, APIConnectionError):
             import traceback
             traceback.print_exc()
