@@ -1,352 +1,393 @@
-# RAG-Based AI Chat System
+# RAG Chat System
 
-A professional, production-ready RAG (Retrieval-Augmented Generation) AI chat system built with Django, React, LangChain, and FAISS.
+A production-grade Retrieval-Augmented Generation (RAG) chat system built with Django, React, LangChain, and FAISS. Users upload documents into a knowledge base and ask questions; the AI answers strictly from those documents with source citations.
+
+---
 
 ## Features
 
-- ✅ **RAG System**: Retrieval-Augmented Generation using LangChain + FAISS
-- ✅ **PDF Knowledge Base**: Automatically load and index PDF documents
-- ✅ **Chat History**: Persistent chat sessions stored in database
-- ✅ **Source Citations**: AI responses include document sources and page numbers
-- ✅ **Conversational Memory**: Maintains context across conversation turns
-- ✅ **Modern UI**: ChatGPT-style chat interface built with React
-- ✅ **Session Management**: Unique session IDs with chat history persistence
-- ✅ **API-Driven**: RESTful API with Django REST Framework
+- **RAG pipeline** — LangChain + FAISS vector store + OpenAI embeddings (`text-embedding-3-small`)
+- **Streaming responses** — Server-Sent Events (SSE) for real-time token streaming
+- **Document upload** — PDF, TXT, MD, DOCX, CSV via drag-and-drop UI or API
+- **Persistent chat sessions** — SQLite-backed session + message history
+- **Source citations** — every answer links back to the source document and page number
+- **JWT authentication** — login, register, auto-refresh, cross-tab logout sync
+- **Security hardening** — prompt injection sanitizer, OpenAI content moderation, rate limiting, middleware body guard
+- **Evaluation suite** — RAGAS metrics, Promptfoo red-team, G-Eval LLM-as-Judge
+
+---
 
 ## Project Structure
 
 ```
 .
-├── backend/                          # Django backend
-│   ├── chat/                        # Chat app
-│   │   ├── models.py               # Database models (ChatSession, Message)
-│   │   ├── views.py                # API endpoints
-│   │   ├── serializers.py          # DRF serializers
-│   │   ├── rag.py                  # RAG system implementation
+├── backend/
+│   ├── chat/
+│   │   ├── models.py          # ChatSession, Message
+│   │   ├── views.py           # API endpoints (chat, stream, session, upload, auth)
+│   │   ├── serializers.py     # DRF serializers
+│   │   ├── rag.py             # RAGSystem — load, embed, retrieve, generate
+│   │   ├── sanitizers.py      # Prompt injection regex guard
+│   │   ├── moderation.py      # OpenAI moderation API (fail-open)
+│   │   ├── middleware.py      # Body size limit, null-byte, scanner UA block
+│   │   ├── throttles.py       # Per-scope DRF throttle classes
 │   │   └── migrations/
-│   ├── core/                        # Django project settings
-│   │   ├── settings.py
-│   │   ├── urls.py                 # URL routing
-│   │   └── wsgi.py
-│   ├── knowledge_base/              # PDF knowledge base directory
-│   ├── manage.py
+│   ├── core/
+│   │   ├── settings.py        # All config — env-driven
+│   │   └── urls.py            # URL routing
+│   ├── knowledge_base/        # Drop documents here
+│   ├── vector_store/          # FAISS index (auto-generated, git-ignored)
 │   ├── requirements.txt
 │   └── .env.example
 │
-├── frontend/                         # React frontend
-│   ├── src/
-│   │   ├── components/              # React components
-│   │   │   ├── ChatContainer.jsx   # Main chat component
-│   │   │   ├── MessageBubble.jsx   # Message display
-│   │   │   ├── MessageInput.jsx    # Input field
-│   │   │   └── SourceCitation.jsx  # Source display
-│   │   ├── services/                # API services
-│   │   │   └── api.js              # API client
-│   │   ├── styles/                  # CSS modules
-│   │   │   ├── ChatContainer.css
-│   │   │   ├── MessageBubble.css
-│   │   │   ├── MessageInput.css
-│   │   │   └── SourceCitation.css
-│   │   ├── App.jsx
-│   │   ├── main.jsx
-│   │   └── index.css
-│   ├── vite.config.js              # Vite config with API proxy
-│   ├── package.json
-│   └── .env
+├── frontend/
+│   └── src/
+│       ├── components/
+│       │   ├── ChatContainer.jsx   # Main chat UI + document upload
+│       │   ├── LoginForm.jsx       # Login / Register toggle
+│       │   ├── MessageBubble.jsx
+│       │   ├── MessageInput.jsx
+│       │   └── SourceCitation.jsx
+│       ├── services/
+│       │   ├── api.js             # Axios client with JWT interceptors
+│       │   └── auth.js            # login, register, logout, token helpers
+│       ├── config.js              # API_BASE_URL
+│       └── App.jsx                # Auth gate — shows LoginForm or ChatContainer
+│
+├── evals/
+│   ├── datasets/
+│   │   ├── golden_qa.json         # 10 ground-truth Q&A pairs
+│   │   └── adversarial.json       # 12 injection / jailbreak test cases
+│   ├── ragas/
+│   │   └── evaluate_ragas.py      # RAGAS metrics runner
+│   ├── promptfoo/
+│   │   └── promptfooconfig.yaml   # HTTP quality + security tests
+│   ├── geval/
+│   │   ├── judge.py               # LLM-as-Judge (chain-of-thought scoring)
+│   │   └── criteria.py            # Coherence, groundedness, conciseness rubrics
+│   └── run_all.py                 # Master runner — exits 1 if thresholds missed
 │
 └── README.md
 ```
 
-## Prerequisites
+---
 
-- Python 3.9+
-- Node.js 16+
-- OpenAI API key (for GPT models)
-- pip (Python package manager)
-- npm or yarn (Node package manager)
+## Quick Start
 
-## Backend Setup
+### Prerequisites
 
-### 1. Create and Activate Virtual Environment
+| Tool | Version |
+|------|---------|
+| Python | 3.9+ |
+| Node.js | 16+ |
+| OpenAI API key | Required |
+
+---
+
+### 1 — Backend Setup
 
 ```bash
-# On Windows
+# From repo root
+cd backend
+
+# Create and activate virtual environment
 python -m venv venv
+# Windows:
 venv\Scripts\activate
-
-# On macOS/Linux
-python3 -m venv venv
+# macOS / Linux:
 source venv/bin/activate
-```
 
-### 2. Install Python Dependencies
-
-```bash
-cd backend
+# Install dependencies
 pip install -r requirements.txt
-```
 
-### 3. Configure Environment Variables
-
-Create a `.env` file in the `backend` directory (copy from `.env.example`):
-
-```bash
-cd backend
+# Copy and configure environment variables
 cp .env.example .env
 ```
 
-Edit `.env` and add your OpenAI API key:
+Edit `backend/.env` — the only required value is your OpenAI key:
 
+```env
+OPENAI_API_KEY=sk-...
+
+# These have working defaults for local dev — change for production:
+DJANGO_SECRET_KEY=django-insecure-replace-this-in-production
+DJANGO_DEBUG=True
+DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1
+CORS_ALLOWED_ORIGINS=http://localhost:5173
 ```
-OPENAI_API_KEY=your-openai-api-key-here
-```
-
-Get your OpenAI API key from: https://platform.openai.com/account/api-keys
-
-### 4. Run Database Migrations
 
 ```bash
-python manage.py makemigrations
+# Apply database migrations
 python manage.py migrate
-```
 
-### 5. Add PDF Documents (Optional)
-
-Place any PDF files in the `backend/knowledge_base/` directory. The system will automatically load and index them on startup.
-
-Example documents you can add:
-- Company handbooks
-- Product documentation
-- FAQs
-- Technical guides
-- Research papers
-
-### 6. Run Development Server
-
-```bash
+# Start the dev server
 python manage.py runserver
 ```
 
-The API will be available at: `http://localhost:8000/api`
+Backend is now running at `http://localhost:8000`.
 
-## Frontend Setup
+---
 
-### 1. Install Node Dependencies
+### 2 — Frontend Setup
 
 ```bash
+# From repo root
 cd frontend
+
 npm install
-```
-
-### 2. Configure API Endpoint
-
-The `.env` file is already configured to use the API at `/api`. The Vite dev server will proxy requests to `http://localhost:8000`.
-
-If you need to change the API URL, edit `frontend/.env`:
-
-```
-VITE_API_URL=http://localhost:8000/api
-```
-
-### 3. Run Development Server
-
-```bash
 npm run dev
 ```
 
-The frontend will be available at: `http://localhost:5173`
+Frontend is now running at `http://localhost:5173`.
 
-## API Endpoints
+---
 
-### Send Message (Chat)
+### 3 — Create Your Account
 
+Open `http://localhost:5173` in your browser. You will see the login screen.
+
+Click **Register** to create an account. After registration you are logged in automatically.
+
+> **Admin access**: You can also create a superuser for the Django admin panel (`/admin/`):
+> ```bash
+> cd backend
+> python manage.py createsuperuser
+> ```
+
+---
+
+### 4 — Add Documents to the Knowledge Base
+
+**Option A — Drag & drop in the UI**
+Click the upload icon in the chat header and drop your files. The vector index rebuilds automatically.
+
+**Option B — Copy files directly**
+Drop `.pdf`, `.txt`, `.md`, `.docx`, or `.csv` files into `backend/knowledge_base/`, then restart the server. The index is rebuilt on startup only when files have changed (SHA-256 manifest comparison).
+
+---
+
+## API Reference
+
+All endpoints (except `register` and `token`) require a JWT access token:
 ```
-POST /api/chat/
+Authorization: Bearer <access_token>
+```
 
-Request Body:
+### Authentication
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/auth/register/` | Create account — `{"username":"...","password":"..."}` |
+| `POST` | `/api/auth/token/` | Get tokens — `{"username":"...","password":"..."}` → `{"access":"...","refresh":"..."}` |
+| `POST` | `/api/auth/token/refresh/` | Refresh access token — `{"refresh":"..."}` |
+| `POST` | `/api/auth/logout/` | Blacklist refresh token — `{"refresh":"..."}` |
+
+### Chat
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/chat/` | Send message, get full response |
+| `POST` | `/api/chat/stream/` | Send message, stream SSE response |
+| `POST` | `/api/session/` | Create new chat session |
+| `GET`  | `/api/session/<uuid>/` | Get session with all messages |
+
+**Chat request body:**
+```json
 {
-  "session_id": "optional-uuid",
-  "user_message": "Your question here"
-}
-
-Response:
-{
-  "answer": "AI response text",
-  "sources": ["Document.pdf - Page 2", "Guide.pdf - Page 5"],
-  "session_id": "550e8400-e29b-41d4-a716-446655440000",
-  "message_id": 1
-}
-```
-
-### Get Session
-
-```
-GET /api/session/{session_id}/
-
-Response:
-{
-  "session_id": "550e8400-e29b-41d4-a716-446655440000",
-  "messages": [
-    {
-      "id": 1,
-      "message_type": "user",
-      "content": "What is in the document?",
-      "sources": [],
-      "created_at": "2026-02-07T10:00:00Z"
-    },
-    {
-      "id": 2,
-      "message_type": "assistant",
-      "content": "The document contains...",
-      "sources": ["Document.pdf - Page 1"],
-      "created_at": "2026-02-07T10:00:05Z"
-    }
-  ],
-  "created_at": "2026-02-07T10:00:00Z",
-  "updated_at": "2026-02-07T10:00:05Z"
-}
-```
-
-### Create Session
-
-```
-POST /api/session/
-
-Response:
-{
-  "session_id": "550e8400-e29b-41d4-a716-446655440000"
+  "user_message": "What is the return policy?",
+  "session_id": "optional-uuid"
 }
 ```
 
-## Usage
+**Chat response:**
+```json
+{
+  "answer": "The return policy allows...",
+  "sources": ["Policy.pdf - Page 3"],
+  "session_id": "550e8400-...",
+  "message_id": 42
+}
+```
 
-1. Open the frontend at `http://localhost:5173` in your browser
-2. Start typing your question in the chat input
-3. The AI will respond with an answer based on the knowledge base documents
-4. Sources are automatically displayed below each AI response
-5. Chat history is saved and can be restored using the session ID
+**Stream events** (SSE, `text/event-stream`):
+```
+data: {"t": "chunk", "content": "The return"}
+data: {"t": "chunk", "content": " policy allows..."}
+data: {"t": "done",  "sources": ["Policy.pdf - Page 3"], "message_id": 42}
+```
+
+### Documents
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/documents/upload/` | Upload files (`multipart/form-data`, field `files`) |
+
+**Upload response:**
+```json
+{
+  "uploaded": ["Policy.pdf", "FAQ.txt"],
+  "skipped": [],
+  "message": "Documents uploaded and index refreshed."
+}
+```
+
+---
+
+## Rate Limits
+
+| Scope | Limit |
+|-------|-------|
+| Anonymous | 10 requests / hour |
+| Authenticated (general) | 60 requests / hour |
+| Chat endpoints | 20 requests / hour |
+| Document upload | 5 requests / hour |
+
+Rate-limited responses return HTTP `429` with a `Retry-After` header.
+
+---
+
+## Security
+
+| Layer | What it does |
+|-------|-------------|
+| **Prompt sanitizer** | 15 compiled regex patterns block injection, jailbreak, role-override attempts before they reach the LLM |
+| **OpenAI moderation** | Free moderation API screens content for hate, self-harm, violence — fail-open (never blocks on API outage) |
+| **Middleware guard** | Blocks scanner user-agents (sqlmap, nikto, burpsuite), enforces 16 KB body limit, rejects null bytes |
+| **Session IDOR prevention** | Sessions are scoped to `request.user` — accessing another user's session returns 404 |
+| **JWT token blacklist** | Logout invalidates the refresh token server-side |
+| **CORS** | Only origins listed in `CORS_ALLOWED_ORIGINS` are allowed |
+
+---
+
+## Evaluation Suite
+
+The `evals/` directory contains three complementary eval frameworks. Run them from the repo root after activating the backend venv.
+
+### RAGAS + G-Eval (no server needed)
+
+```bash
+# Both suites
+python evals/run_all.py
+
+# RAGAS only
+python evals/run_all.py --ragas
+
+# G-Eval only
+python evals/run_all.py --geval
+```
+
+**RAGAS thresholds:**
+
+| Metric | Threshold |
+|--------|-----------|
+| Faithfulness | > 0.85 |
+| Answer relevancy | > 0.80 |
+| Context precision | > 0.75 |
+| Context recall | > 0.70 |
+
+**G-Eval thresholds:** coherence, groundedness, conciseness all > 3.5 / 5.0
+
+Results are written to `evals/results/`.
+
+### Promptfoo (requires live server + JWT)
+
+```bash
+# Get a token first
+TOKEN=$(curl -s -X POST http://localhost:8000/api/auth/token/ \
+  -H "Content-Type: application/json" \
+  -d '{"username":"<user>","password":"<pass>"}' \
+  | python -c "import sys,json; print(json.load(sys.stdin)['access'])")
+
+JWT_TOKEN=$TOKEN npx promptfoo eval --config evals/promptfoo/promptfooconfig.yaml
+```
+
+Tests 5 quality Q&A checks + 5 injection/jailbreak security checks against the live API.
+
+---
+
+## Configuration Reference
+
+### RAG parameters (`backend/chat/rag.py`)
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `chunk_size` | 1000 | Characters per document chunk |
+| `chunk_overlap` | 200 | Overlap between adjacent chunks |
+| `k` (retrieval) | 3 | Number of chunks returned per query |
+| LLM model | `gpt-4o-mini` | Change to `gpt-4o` for higher quality |
+| Embedding model | `text-embedding-3-small` | OpenAI embedding model |
+
+### Environment variables (`backend/.env`)
+
+| Variable | Default | Required |
+|----------|---------|----------|
+| `OPENAI_API_KEY` | — | Yes |
+| `DJANGO_SECRET_KEY` | insecure dev key | Yes (prod) |
+| `DJANGO_DEBUG` | `True` | No |
+| `DJANGO_ALLOWED_HOSTS` | `localhost,127.0.0.1` | No |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:5173` | No |
+
+---
 
 ## Architecture
 
-### Backend (Django)
+```
+Browser
+  └─ React (Vite)
+       ├─ LoginForm      ← JWT login / register
+       ├─ ChatContainer  ← SSE streaming, file upload
+       └─ axios (api.js) ← auto-injects Bearer token, refreshes on 401
 
-- **Models**: `ChatSession` and `Message` for storing chat history
-- **RAG System** (`rag.py`):
-  - PDF document loading and processing
-  - Text chunking with `RecursiveCharacterTextSplitter`
-  - FAISS vector store for semantic search
-  - OpenAI embeddings and GPT models for responses
-  - Conversational memory using last 4 messages for context
-- **Views**: REST API endpoints for chat operations
-- **Serializers**: Data validation and transformation
+Django (port 8000)
+  ├─ PromptGuardMiddleware  ← body size, null bytes, scanner UAs
+  ├─ DRF throttling         ← per-scope rate limits
+  ├─ views.py
+  │    ├─ sanitize_message()   ← regex injection check
+  │    ├─ is_content_safe()    ← OpenAI moderation
+  │    └─ RAGSystem.chat_stream()
+  └─ RAGSystem (rag.py)
+       ├─ FAISS vector store (disk-cached, manifest-based invalidation)
+       ├─ OpenAI Embeddings (text-embedding-3-small)
+       └─ ChatOpenAI (gpt-4o-mini, streaming=True)
+```
 
-### Frontend (React)
-
-- **ChatContainer**: Main component managing chat state and API calls
-- **MessageBubble**: For displaying individual messages
-- **MessageInput**: For user input with support for multi-line messages
-- **SourceCitation**: For displaying source documents
-- **API Service**: Axios-based API client for backend communication
-
-## Configuration
-
-### RAG System Parameters
-
-Edit `backend/chat/rag.py` to customize:
-
-- **Chunk Size**: `chunk_size=1000` (split documents into 1000 char chunks)
-- **Chunk Overlap**: `chunk_overlap=200` (200 char overlap between chunks)
-- **Retrieval K**: `search_kwargs={"k": 3}` (retrieve top 3 relevant chunks)
-- **LLM Model**: `model="gpt-4o-mini"` (use different OpenAI models)
-- **Temperature**: `temperature=0.7` (response creativity level)
-
-### API Configuration
-
-Edit `backend/core/settings.py`:
-
-- **CORS Settings**: Already allows all origins for demo
-- **Database**: Default SQLite, can change to PostgreSQL/MySQL
-- **Rest Framework**: Pagination, filtering, authentication settings
+---
 
 ## Troubleshooting
 
-### Issue: CORS errors in frontend
+**Login returns 401 immediately after registering**
+The server may still be starting. Wait a moment and retry.
 
-**Solution**: The backend already has CORS enabled. Make sure:
-- Backend is running on `http://localhost:8000`
-- Frontend dev server is running on `http://localhost:5173`
-- `django-cors-headers` is installed and configured
-
-### Issue: OpenAI API errors
-
-**Solution**: 
-- Ensure `OPENAI_API_KEY` is set in backend `.env` file
-- Check that your API key is valid and has credits
-- Verify you're using a valid model (gpt-4o-mini, gpt-4, etc.)
-
-### Issue: PDFs not being loaded
-
-**Solution**:
-- Place PDF files in `backend/knowledge_base/` directory
-- Files must have `.pdf` extension
-- Restart the Django server for changes to take effect
-- Check console logs for any PDF loading errors
-
-### Issue: Database migrations errors
-
-**Solution**:
+**"No module named 'ragas'" when running evals**
+Install eval dependencies:
 ```bash
-# If migrations fail, try:
-python manage.py migrate --fake-initial
-python manage.py migrate
+pip install "ragas>=0.1.0" "datasets>=2.14.0"
 ```
 
-## Production Deployment
+**Documents not appearing in answers**
+- Check files are in `backend/knowledge_base/` with a supported extension
+- Restart the server — the index rebuilds on startup when files change
+- Check server logs for PDF loading errors
 
-### Backend (Django)
+**CORS errors in browser**
+Ensure `CORS_ALLOWED_ORIGINS` in `backend/.env` includes the frontend origin (e.g., `http://localhost:5173`).
 
-For production deployment:
+**OpenAI API errors**
+- Verify `OPENAI_API_KEY` is set in `backend/.env`
+- Check your API key has credits at `platform.openai.com`
 
-1. Set `DEBUG=False` in `settings.py`
-2. Add your domain to `ALLOWED_HOSTS`
-3. Use PostgreSQL instead of SQLite
-4. Set secure cookies and HTTPS
-5. Use environment variables for secrets
-6. Deploy using Gunicorn/uWSGI
+**Rate limit hit (HTTP 429)**
+Wait for the `Retry-After` period shown in the response header. Chat is limited to 20 requests/hour per user.
 
-### Frontend (React)
+---
 
-Build for production:
+## Production Checklist
 
-```bash
-npm run build
-```
-
-Deploy the `dist/` folder to a static hosting service or CDN.
-
-## Performance Optimization
-
-- FAISS vector store is in-memory for fast retrieval
-- PDFs are cached as embeddings (no re-processing on restart)
-- Chat history loaded on-demand per session
-- Streaming responses could be added with WebSockets
-
-## Security Considerations
-
-- No authentication in this demo version
-- Add session tokens for production
-- Validate and sanitize all user inputs
-- Rate limit API endpoints
-- Use HTTPS in production
-- Secure API keys in environment variables
-
-## License
-
-This project is provided as-is for demonstration purposes.
-
-## Support
-
-For issues or questions:
-1. Check the troubleshooting section
-2. Review API endpoint documentation
-3. Check browser console and server logs for errors
+- [ ] Set `DJANGO_SECRET_KEY` to a random 50-char string
+- [ ] Set `DJANGO_DEBUG=False`
+- [ ] Set `DJANGO_ALLOWED_HOSTS` to your domain
+- [ ] Set `CORS_ALLOWED_ORIGINS` to your frontend domain only
+- [ ] Switch database to PostgreSQL
+- [ ] Serve Django with Gunicorn behind Nginx
+- [ ] Enable `SECURE_SSL_REDIRECT`, `SESSION_COOKIE_SECURE`, `CSRF_COOKIE_SECURE` in settings
+- [ ] Build the frontend: `npm run build` → deploy `dist/` to a CDN

@@ -1,3 +1,44 @@
+# Environment
 backend/.env
 frontend/.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Django
+backend/db.sqlite3
+backend/backups/
 backend/vector_store/
+*.log
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Eval results (generated output, not source)
+evals/results/
+evals/datasets/feedback_candidates.json
