@@ -41,6 +41,49 @@ def _openai_kwargs() -> dict:
         "http_async_client": httpx.AsyncClient(timeout=timeout),
     }
 
+CHAT_PROMPT_TEMPLATE = """
+You are a helpful AI assistant with two sources of context:
+
+1. PROVIDED DOCUMENTS — the authoritative source for factual answers about the subject matter.
+2. PERSONAL CONTEXT — what you know about this specific user. Use it to personalize tone, pick
+   relevant examples, and to answer direct questions the user asks about themselves.
+
+Rules:
+- Factual subject-matter claims MUST be grounded in the document context. Do not invent facts.
+- If the documents cannot answer a factual question about the subject matter, respond with EXACTLY:
+  I don't have information about this in the provided documents.
+- You MAY answer questions the user asks about themselves (\"who am I\", \"what am I working on\")
+  using the personal context below, even when the documents don't cover it.
+
+About the user:
+{user_profile}
+
+What you remember about this user:
+{user_memories}
+
+Conversation history:
+{chat_history}
+
+Document context:
+{context}
+
+User question:
+{input}
+
+Answer clearly and concisely.
+"""
+
+
+def _format_memory_block(memories: List[str]) -> str:
+    if not memories:
+        return "(no memories yet)"
+    return "\n".join(f"- {m}" for m in memories)
+
+
+def _format_profile(profile_text: str) -> str:
+    return profile_text.strip() if profile_text and profile_text.strip() else "(no profile set)"
+
+
 class RAGSystem:
     """RAG (Retrieval-Augmented Generation) system for chat"""
 
@@ -290,12 +333,57 @@ class RAGSystem:
         )
 
     # -------------------------
+    # Personal context
+    # -------------------------
+    def build_personal_context(
+        self,
+        user_id: int | None,
+        user_message: str,
+    ) -> Tuple[str, List[str]]:
+        """Return (profile_text, memory_texts) for the given user.
+
+        Safe to call with ``user_id=None`` (anonymous) or when profile/memory
+        infrastructure isn't ready — returns empty values on any failure."""
+        if not user_id:
+            return "", []
+
+        from .models import UserProfile
+        from .memory import get_memory_store
+
+        profile_text = ""
+        try:
+            profile = UserProfile.objects.get(user_id=user_id)
+            parts: List[str] = []
+            if profile.bio:
+                parts.append(profile.bio.strip())
+            prefs = profile.preferences or {}
+            if prefs:
+                pref_str = ", ".join(f"{k}: {v}" for k, v in prefs.items() if v)
+                if pref_str:
+                    parts.append(f"Preferences — {pref_str}")
+            profile_text = " ".join(parts)
+        except UserProfile.DoesNotExist:
+            pass
+        except Exception:
+            pass
+
+        memory_texts: List[str] = []
+        try:
+            store = get_memory_store()
+            memory_texts = store.search(user_id, user_message, k=3)
+        except Exception:
+            pass
+
+        return profile_text, memory_texts
+
+    # -------------------------
     # Chat
     # -------------------------
     def chat(
         self,
         user_message: str,
-        chat_history: List[Dict]
+        chat_history: List[Dict],
+        user_id: int | None = None,
     ) -> Tuple[str, List[str], Dict[str, Any]]:
         """Returns (answer, sources, usage). `usage` is {tokens_in, tokens_out, cost_usd}
         — captures LLM call only; embedding cost is tracked separately if needed."""
@@ -305,25 +393,9 @@ class RAGSystem:
             for m in chat_history[-4:]
         )
 
-        prompt = ChatPromptTemplate.from_template(
-            """
-You are a helpful AI assistant.
-Answer ONLY using the provided document context.
-If the answer is not present, respond with EXACTLY this sentence and nothing else:
-I don't have information about this in the provided documents.
+        profile_text, memory_texts = self.build_personal_context(user_id, user_message)
 
-Conversation history:
-{chat_history}
-
-Document context:
-{context}
-
-User question:
-{input}
-
-Answer clearly and concisely.
-"""
-        )
+        prompt = ChatPromptTemplate.from_template(CHAT_PROMPT_TEMPLATE)
 
         document_chain = create_stuff_documents_chain(
             self.llm,
@@ -340,7 +412,9 @@ Answer clearly and concisely.
                 result = retrieval_chain.invoke(
                     {
                         "input": user_message,
-                        "chat_history": formatted_history
+                        "chat_history": formatted_history,
+                        "user_profile": _format_profile(profile_text),
+                        "user_memories": _format_memory_block(memory_texts),
                     }
                 )
 
