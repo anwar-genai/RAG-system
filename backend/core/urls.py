@@ -25,6 +25,11 @@ urlpatterns = [
     # Message feedback
     path('api/messages/<int:message_id>/feedback/', views.message_feedback, name='message_feedback'),
 
+    # Personal memory
+    path('api/memory/profile/', views.memory_profile, name='memory_profile'),
+    path('api/memory/list/', views.memory_list, name='memory_list'),
+    path('api/memory/<int:memory_id>/', views.memory_delete, name='memory_delete'),
+
     # Documents
     path('api/documents/upload/', views.upload_documents, name='upload_documents'),
 
