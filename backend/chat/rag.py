@@ -139,6 +139,19 @@ _PERSONAL_PATTERNS = [
     re.compile(r"\bmy\s+(role|job|profession|background)\b", re.I),
 ]
 
+# User telling the assistant about themselves (statements, not questions). These
+# carry the durable facts memory extraction wants to capture, so they must not
+# fall through to the grounded RAG path and trigger the doc-fallback sentence.
+_SELF_DISCLOSURE_PATTERNS = [
+    re.compile(r"^\s*i'?m\s+(a|an)\s+", re.I),
+    re.compile(r"^\s*i\s+am\s+(a|an)\s+", re.I),
+    re.compile(r"^\s*i'?m\s+(building|working\s+on|developing|making|writing|designing|creating|learning|studying)\b", re.I),
+    re.compile(r"^\s*i\s+am\s+(building|working\s+on|developing|making|writing|designing|creating|learning|studying)\b", re.I),
+    re.compile(r"^\s*i\s+work\s+(as|at|in|for)\b", re.I),
+    re.compile(r"\bmy\s+name\s+is\b", re.I),
+    re.compile(r"^\s*call\s+me\s+\w+", re.I),
+]
+
 
 def classify_intent(message: str) -> str:
     """Return one of 'conversational', 'personal', or 'factual'."""
@@ -148,6 +161,10 @@ def classify_intent(message: str) -> str:
 
     if any(p.search(text) for p in _PERSONAL_PATTERNS):
         return "personal"
+
+    # Self-disclosure with no embedded question → small talk, no retrieval.
+    if "?" not in text and any(p.search(text) for p in _SELF_DISCLOSURE_PATTERNS):
+        return "conversational"
 
     if _GREETING_START_RE.search(text) and len(text.split()) <= 8:
         return "conversational"
