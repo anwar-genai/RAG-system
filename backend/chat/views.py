@@ -154,7 +154,10 @@ def _extract_and_store_memories(rag_system, user_id, user_message, assistant_rep
                 user_id=user_id, content=fact, source='auto',
                 source_message=ai_msg_obj,
             )
-            store.add(user_id, fact, mem.id)
+            # MemoryStore returns False on near-duplicate; drop the orphan DB row
+            # so it doesn't accumulate as the user re-mentions the same fact.
+            if not store.add(user_id, fact, mem.id):
+                mem.delete()
     except Exception:
         import traceback
         traceback.print_exc()
