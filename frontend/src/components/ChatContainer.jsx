@@ -11,7 +11,7 @@ const EXAMPLE_PROMPTS = [
   'How does the retrieval system work?',
 ];
 
-export default function ChatContainer({ onLogout, onAdmin, currentUser }) {
+export default function ChatContainer({ onLogout, onAdmin, onMemorySettings, currentUser }) {
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
   const [sessionId, setSessionId] = useState(null);
@@ -344,6 +344,17 @@ export default function ChatContainer({ onLogout, onAdmin, currentUser }) {
             {userMenuOpen && (
               <div className="user-menu">
                 <div className="user-menu-name">{currentUser?.username || 'User'}</div>
+                {onMemorySettings && (
+                  <button
+                    className="user-menu-item"
+                    onClick={() => { setUserMenuOpen(false); onMemorySettings(); }}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M12 2a3 3 0 0 0-3 3v1.5a3 3 0 0 0-3 3V11a3 3 0 0 0-2 2.83V16a3 3 0 0 0 3 3 3 3 0 0 0 3 3 3 3 0 0 0 4 0 3 3 0 0 0 3-3 3 3 0 0 0 3-3v-2.17A3 3 0 0 0 18 11V9.5a3 3 0 0 0-3-3V5a3 3 0 0 0-3-3z"/>
+                    </svg>
+                    Memory & personalization
+                  </button>
+                )}
                 {isAdmin && onAdmin && (
                   <button
                     className="user-menu-item"
