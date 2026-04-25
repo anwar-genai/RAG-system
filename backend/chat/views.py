@@ -137,6 +137,29 @@ def chat_endpoint(request):
     })
 
 
+def _extract_and_store_memories(rag_system, user_id, user_message, assistant_reply, ai_msg_obj):
+    """Pull durable user facts from one exchange and persist to UserMemory + FAISS.
+    Non-fatal — chat reply has already streamed, so any failure is swallowed."""
+    if not user_id or not assistant_reply:
+        return
+    try:
+        facts = rag_system.extract_memories(user_message, assistant_reply)
+        if not facts:
+            return
+        from .models import UserMemory
+        from .memory import get_memory_store
+        store = get_memory_store()
+        for fact in facts:
+            mem = UserMemory.objects.create(
+                user_id=user_id, content=fact, source='auto',
+                source_message=ai_msg_obj,
+            )
+            store.add(user_id, fact, mem.id)
+    except Exception:
+        import traceback
+        traceback.print_exc()
+
+
 def _stream_chat_generator(session, user_message, user_msg_obj, request_id='', user_id=None):
     chat_history = [
         {"type": m["message_type"], "content": m["content"]}
@@ -176,6 +199,10 @@ def _stream_chat_generator(session, user_message, user_msg_obj, request_id='', u
                         ChatSession.objects.filter(pk=session.pk).update(title=title)
                         session.title = title
                 yield f"data: {json.dumps({'t': 'done', 'sources': value, 'message_id': ai_msg_obj.id, 'session_id': str(session.session_id), 'title': session.title})}\n\n"
+                _extract_and_store_memories(
+                    rag_system, user_id, user_message,
+                    "".join(full_answer), ai_msg_obj,
+                )
             elif kind == "error":
                 errored = True
                 yield f"data: {json.dumps({'t': 'error', 'error': value})}\n\n"
