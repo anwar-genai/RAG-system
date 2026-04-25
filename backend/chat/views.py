@@ -137,7 +137,7 @@ def chat_endpoint(request):
     })
 
 
-def _stream_chat_generator(session, user_message, user_msg_obj, request_id=''):
+def _stream_chat_generator(session, user_message, user_msg_obj, request_id='', user_id=None):
     chat_history = [
         {"type": m["message_type"], "content": m["content"]}
         for m in session.messages.exclude(id=user_msg_obj.id).values("message_type", "content").order_by("created_at")
@@ -150,7 +150,7 @@ def _stream_chat_generator(session, user_message, user_msg_obj, request_id=''):
     errored = False
 
     try:
-        for event in rag_system.chat_stream(user_message, chat_history):
+        for event in rag_system.chat_stream(user_message, chat_history, user_id=user_id):
             if not isinstance(event, tuple) or len(event) != 2:
                 continue
             kind, value = event
@@ -221,7 +221,7 @@ def chat_stream_endpoint(request):
     )
 
     response = StreamingHttpResponse(
-        _stream_chat_generator(session, user_message, user_msg_obj, request_id=rid),
+        _stream_chat_generator(session, user_message, user_msg_obj, request_id=rid, user_id=request.user.id),
         content_type="text/event-stream",
     )
     response["Cache-Control"] = "no-cache"

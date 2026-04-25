@@ -655,25 +655,9 @@ class RAGSystem:
             yield from self._chat_stream_direct(user_message, formatted_history, user_id, intent)
             return
 
-        prompt = ChatPromptTemplate.from_template(
-            """
-You are a helpful AI assistant.
-Answer ONLY using the provided document context.
-If the answer is not present, respond with EXACTLY this sentence and nothing else:
-I don't have information about this in the provided documents.
+        profile_text, memory_texts = self.build_personal_context(user_id, user_message)
 
-Conversation history:
-{chat_history}
-
-Document context:
-{context}
-
-User question:
-{input}
-
-Answer clearly and concisely.
-"""
-        )
+        prompt = ChatPromptTemplate.from_template(CHAT_PROMPT_TEMPLATE)
 
         document_chain = create_stuff_documents_chain(
             self.llm_streaming,
@@ -689,6 +673,8 @@ Answer clearly and concisely.
                 "input": user_message,
                 "chat_history": formatted_history,
                 "context": documents,
+                "user_profile": _format_profile(profile_text),
+                "user_memories": _format_memory_block(memory_texts),
             }
 
             answer_parts = []
